@@ -8,6 +8,7 @@ The app compiles daily.dev activity into a project recommendation flow:
 - normalize imported data into internal activity items
 - cluster technical interests with deterministic heuristics
 - synthesize a project recommendation, roadmap, and learning goals
+- optionally refine the deterministic project with an LLM provider
 - fall back to demo data if the live path is missing data or fails
 
 ## Why the token flow works this way
@@ -30,6 +31,57 @@ The current project synthesis is rule-based instead of LLM-first because:
 - the UI contract can stabilize before a prompt-based layer is introduced
 
 This keeps the pipeline understandable while still leaving a clear insertion point for AI generation later.
+
+## LLM providers
+
+The current LLM layer is server-side, optional, and server-configured first.
+
+Supported providers:
+
+- OpenAI
+- Ollama
+- OpenAI-compatible API
+
+Why it is implemented as a refinement step instead of the primary generator:
+
+- clustering and imported signals stay inspectable even if the model call fails
+- provider outages should not break the core product flow
+- model choice is useful, but should not dominate the main UX
+
+The UI keeps provider settings in a compact `Model settings` disclosure for that reason.
+
+## Server-first LLM configuration
+
+Primary configuration now lives on the server via environment variables.
+
+Current server-side env knobs:
+
+- `LLM_PROVIDER`
+- `LLM_MODEL`
+- `OPENAI_API_KEY`
+- `OPEN_AI_API_TOKEN`
+- `OLLAMA_BASE_URL`
+- `COMPATIBLE_API_BASE_URL`
+- `COMPATIBLE_API_TOKEN`
+
+Behavior:
+
+- if the UI sends no override, the request uses server LLM settings
+- if the UI explicitly enables override mode, request-level settings replace the server defaults for that request only
+- if the provider call fails or times out, the app returns deterministic output with generation warnings
+
+This keeps deploy-time behavior stable while preserving a testing escape hatch.
+
+## OpenAI implementation note
+
+OpenAI requests use the Responses API, which is the recommended interface for new OpenAI integrations in the current official docs.
+
+Current env key lookup order:
+
+- `OPENAI_API_KEY`
+- `OPEN_AI_API_TOKEN`
+
+The second name exists here for compatibility with the current local `.env`.
 
 ## daily.dev API assumptions
 
@@ -61,6 +113,7 @@ This is intentional. The product should stay demoable even when the external API
 
 ## Next documentation targets
 
+- add a request/response contract note for the LLM settings payload
 - add a request/response contract note for `/api/compile`
 - document the clustering heuristics and keyword families
 - add a changelog section for product-facing behavior changes

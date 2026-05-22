@@ -34,6 +34,29 @@ export interface ProjectSpec {
   rationale: string[];
 }
 
+export type LlmProvider = 'none' | 'openai' | 'ollama' | 'compatible';
+
+export interface LlmSettings {
+  provider: LlmProvider;
+  model: string;
+  baseUrl?: string;
+  apiToken?: string;
+}
+
+export interface LlmServerConfigSummary {
+  provider: LlmProvider;
+  model: string;
+  baseUrl?: string;
+  hasApiToken: boolean;
+}
+
+export interface GenerationSummary {
+  strategy: 'deterministic' | 'llm';
+  provider: LlmProvider;
+  model?: string;
+  warnings: string[];
+}
+
 export interface ImportSummary {
   mode: 'live' | 'demo';
   usedFallback: boolean;
@@ -55,4 +78,5 @@ export interface CompilationResult {
   clusters: Cluster[];
   project: ProjectSpec;
   importSummary: ImportSummary;
+  generation: GenerationSummary;
 }

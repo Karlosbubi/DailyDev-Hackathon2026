@@ -1,18 +1,27 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { buildDemoCompilation, compileActivity } from '$lib/compiler/synthesize';
+import type { LlmSettings } from '$lib/compiler/types';
 import { DailyDevApiError, importDailyDevActivity } from '$lib/server/dailydev';
+import { resolveEffectiveLlmSettings, refineProjectWithLlm } from '$lib/server/llm';
 
 export async function POST({ request, fetch }) {
-  const { token, forceDemo } = (await request
+  const { token, forceDemo, llm } = (await request
     .json()
-    .catch(() => ({ token: '', forceDemo: false }))) as {
+    .catch(() => ({ token: '', forceDemo: false, llm: undefined }))) as {
     token?: string;
     forceDemo?: boolean;
+    llm?: Partial<LlmSettings>;
   };
 
   if (forceDemo) {
-    return json(buildDemoCompilation());
+    const demo = buildDemoCompilation();
+    demo.generation = {
+      strategy: 'deterministic',
+      provider: 'none',
+      warnings: []
+    };
+    return json(demo);
   }
 
   const effectiveToken = token?.trim() || env.DAILY_DEV_API_TOKEN?.trim() || '';
@@ -36,17 +45,48 @@ export async function POST({ request, fetch }) {
       return json(fallback);
     }
 
-    return json(
-      compileActivity(imported.activity, {
-        mode: 'live',
-        usedFallback: false,
-        importedSources: imported.importedSources,
-        importedCount: imported.activity.length,
-        warnings: imported.warnings,
-        tokenSource,
-        profile: imported.profile
-      })
-    );
+    const compilation = compileActivity(imported.activity, {
+      mode: 'live',
+      usedFallback: false,
+      importedSources: imported.importedSources,
+      importedCount: imported.activity.length,
+      warnings: imported.warnings,
+      tokenSource,
+      profile: imported.profile
+    });
+
+    const llmSettings: LlmSettings = resolveEffectiveLlmSettings(llm);
+
+    const llmResult = await refineProjectWithLlm({
+      settings: llmSettings,
+      profile: imported.profile,
+      activity: compilation.activity,
+      clusters: compilation.clusters,
+      project: compilation.project
+    });
+
+    if (llmResult.project) {
+      compilation.project = {
+        ...compilation.project,
+        ...llmResult.project,
+        rationale: llmResult.project.rationale ?? compilation.project.rationale
+      };
+      compilation.generation = {
+        strategy: 'llm',
+        provider: llmResult.provider,
+        model: llmResult.model,
+        warnings: llmResult.warnings
+      };
+    } else {
+      compilation.generation = {
+        strategy: 'deterministic',
+        provider: llmResult.provider,
+        model: llmResult.model,
+        warnings: llmResult.warnings
+      };
+    }
+
+    return json(compilation);
   } catch (error) {
     const warnings =
       error instanceof DailyDevApiError

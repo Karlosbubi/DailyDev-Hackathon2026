@@ -299,7 +299,12 @@ export function compileActivity(
     activity: workingSet,
     clusters,
     project,
-    importSummary
+    importSummary,
+    generation: {
+      strategy: 'deterministic',
+      provider: 'none',
+      warnings: []
+    }
   };
 }
 
