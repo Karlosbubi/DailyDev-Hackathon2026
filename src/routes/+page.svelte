@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import type { CompilationResult } from '$lib/compiler/types';
 
+  export let data: { hasServerToken: boolean };
+
   let token = '';
   let compilation: CompilationResult | null = null;
   let isLoading = false;
@@ -20,7 +22,7 @@
     trending: 'Trending'
   };
 
-  async function compile(useToken: boolean) {
+  async function compile(mode: 'server' | 'manual' | 'demo') {
     isLoading = true;
     error = '';
 
@@ -31,8 +33,8 @@
           'content-type': 'application/json'
         },
         body: JSON.stringify({
-          token: useToken ? token.trim() : '',
-          forceDemo: !useToken
+          token: mode === 'manual' ? token.trim() : '',
+          forceDemo: mode === 'demo'
         })
       });
 
@@ -55,7 +57,7 @@
 
   onMount(async () => {
     token = localStorage.getItem('dailydev-token') ?? '';
-    await compile(Boolean(token.trim()));
+    await compile(token.trim() ? 'manual' : data.hasServerToken ? 'server' : 'demo');
   });
 </script>
 
@@ -78,36 +80,44 @@
     <div class="grid w-full max-w-xl gap-3 rounded-[24px] border border-black/10 bg-white/70 p-4">
       <label class="grid gap-2">
         <span class="font-mono text-[11px] uppercase tracking-[0.18em] text-black/55">
-          daily.dev API token
+          Bring your own daily.dev token
         </span>
         <input
           class="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm outline-none transition focus:border-moss-500"
           type="password"
           bind:value={token}
           oninput={(event) => persistToken((event.currentTarget as HTMLInputElement).value)}
-          placeholder="Paste a personal access token for live import"
+          placeholder="Paste a personal access token for your own profile"
         />
       </label>
       <div class="flex flex-wrap gap-3">
         <button
-          class="cursor-pointer rounded-full bg-linear-to-br from-moss-500 to-emerald-500 px-6 py-3 text-sm font-bold text-white shadow-[0_14px_30px_rgba(12,124,89,0.25)] transition hover:-translate-y-px hover:shadow-[0_18px_36px_rgba(12,124,89,0.32)] disabled:cursor-wait disabled:opacity-70"
+          class="cursor-pointer rounded-full bg-linear-to-br from-moss-500 to-emerald-500 px-6 py-3 text-sm font-bold text-white shadow-[0_14px_30px_rgba(12,124,89,0.25)] transition hover:-translate-y-px hover:shadow-[0_18px_36px_rgba(12,124,89,0.32)] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
-          disabled={isLoading}
-          onclick={() => compile(Boolean(token.trim()))}
+          disabled={isLoading || !token.trim()}
+          onclick={() => compile('manual')}
         >
-          {isLoading ? 'Compiling...' : token.trim() ? 'Import and Compile' : 'Compile Demo'}
+          {isLoading ? 'Compiling...' : 'Use Pasted Token'}
+        </button>
+        <button
+          class="cursor-pointer rounded-full border border-black/10 bg-white px-5 py-3 text-sm font-semibold text-black/70 transition hover:bg-black/3 disabled:cursor-not-allowed disabled:opacity-50"
+          type="button"
+          disabled={isLoading || !data.hasServerToken}
+          onclick={() => compile('server')}
+        >
+          Use Server Token
         </button>
         <button
           class="cursor-pointer rounded-full border border-black/10 bg-white px-5 py-3 text-sm font-semibold text-black/70 transition hover:bg-black/3"
           type="button"
           disabled={isLoading}
-          onclick={() => compile(false)}
+          onclick={() => compile('demo')}
         >
           Use Demo Data
         </button>
       </div>
       <p class="font-mono text-xs uppercase tracking-[0.14em] text-black/[0.55]">
-        Token stays in local browser storage for this prototype. Live import falls back to demo mode on API failure.
+        Pasted token fetches your own profile and activity. Server token remains available as a local fallback.
       </p>
     </div>
   </header>
@@ -131,7 +141,11 @@
       {/if}
 
       {#if compilation}
-        <div class="mt-5 grid gap-4 md:grid-cols-4">
+        <div class="mt-5 grid gap-4 md:grid-cols-5">
+          <article class="surface-card rounded-2xl p-4">
+            <p class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Token source</p>
+            <p class="text-sm leading-6 text-black/70">{compilation.importSummary.tokenSource ?? 'none'}</p>
+          </article>
           <article class="surface-card rounded-2xl p-4">
             <p class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Imported items</p>
             <p class="text-2xl font-bold">{compilation.importSummary.importedCount}</p>
@@ -153,6 +167,29 @@
             <p class="text-sm leading-6 text-black/70">{compilation.importSummary.warnings.length || 0}</p>
           </article>
         </div>
+
+        {#if compilation.importSummary.profile}
+          <article class="surface-card mt-4 rounded-2xl p-4">
+            <p class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Imported profile</p>
+            <h3 class="text-lg font-semibold text-ink-900">{compilation.importSummary.profile.name}</h3>
+            <p class="text-sm text-black/60">
+              {compilation.importSummary.profile.username
+                ? `@${compilation.importSummary.profile.username}`
+                : 'No public handle returned'}
+            </p>
+            <div class="mt-3 flex flex-wrap gap-3 text-sm text-black/65">
+              {#if compilation.importSummary.profile.experienceLevel}
+                <span>Level: {compilation.importSummary.profile.experienceLevel}</span>
+              {/if}
+              {#if compilation.importSummary.profile.reputation !== undefined}
+                <span>Reputation: {compilation.importSummary.profile.reputation}</span>
+              {/if}
+            </div>
+            {#if compilation.importSummary.profile.bio}
+              <p class="mt-3 text-sm leading-6 text-black/60">{compilation.importSummary.profile.bio}</p>
+            {/if}
+          </article>
+        {/if}
 
         {#if compilation.importSummary.warnings.length > 0}
           <div class="mt-4 grid gap-2">

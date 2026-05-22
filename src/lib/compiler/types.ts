@@ -40,6 +40,14 @@ export interface ImportSummary {
   importedSources: string[];
   importedCount: number;
   warnings: string[];
+  tokenSource?: 'manual' | 'server' | 'none';
+  profile?: {
+    name: string;
+    username?: string;
+    bio?: string;
+    reputation?: number;
+    experienceLevel?: string;
+  } | null;
 }
 
 export interface CompilationResult {

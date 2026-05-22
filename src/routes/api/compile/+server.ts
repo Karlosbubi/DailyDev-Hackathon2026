@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
 import { buildDemoCompilation, compileActivity } from '$lib/compiler/synthesize';
 import { DailyDevApiError, importDailyDevActivity } from '$lib/server/dailydev';
 
@@ -14,12 +15,17 @@ export async function POST({ request, fetch }) {
     return json(buildDemoCompilation());
   }
 
-  if (!token?.trim()) {
-    return json(buildDemoCompilation(['No API token provided. Running in demo mode.']));
+  const effectiveToken = token?.trim() || env.DAILY_DEV_API_TOKEN?.trim() || '';
+  const tokenSource = token?.trim() ? 'manual' : env.DAILY_DEV_API_TOKEN?.trim() ? 'server' : 'none';
+
+  if (!effectiveToken) {
+    const demo = buildDemoCompilation(['No API token provided. Running in demo mode.']);
+    demo.importSummary.tokenSource = 'none';
+    return json(demo);
   }
 
   try {
-    const imported = await importDailyDevActivity(fetch, token);
+    const imported = await importDailyDevActivity(fetch, effectiveToken);
 
     if (imported.activity.length === 0) {
       const fallback = buildDemoCompilation([
@@ -36,7 +42,9 @@ export async function POST({ request, fetch }) {
         usedFallback: false,
         importedSources: imported.importedSources,
         importedCount: imported.activity.length,
-        warnings: imported.warnings
+        warnings: imported.warnings,
+        tokenSource,
+        profile: imported.profile
       })
     );
   } catch (error) {
@@ -47,6 +55,7 @@ export async function POST({ request, fetch }) {
 
     const fallback = buildDemoCompilation(warnings);
     fallback.importSummary.usedFallback = true;
+    fallback.importSummary.tokenSource = tokenSource;
     return json(fallback);
   }
 }

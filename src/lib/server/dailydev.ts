@@ -12,6 +12,14 @@ interface GenericRecord {
   [key: string]: unknown;
 }
 
+export interface ImportedProfile {
+  name: string;
+  username?: string;
+  bio?: string;
+  reputation?: number;
+  experienceLevel?: string;
+}
+
 export class DailyDevApiError extends Error {
   status: number;
 
@@ -148,7 +156,7 @@ function normalizeStackPayload(payload: unknown): ActivityItem[] {
 }
 
 async function fetchStack(fetchFn: FetchLike, token: string): Promise<ActivityItem[]> {
-  for (const path of ['/stack', '/profile/stack', '/tech-stack']) {
+  for (const path of ['/profile/stack/?limit=20', '/profile/stack?limit=20', '/tech-stack']) {
     const payload = await getJson<unknown>(fetchFn, path, token);
     if (payload) {
       const normalized = normalizeStackPayload(payload);
@@ -161,10 +169,28 @@ async function fetchStack(fetchFn: FetchLike, token: string): Promise<ActivityIt
   return [];
 }
 
+async function fetchProfile(fetchFn: FetchLike, token: string): Promise<ImportedProfile | null> {
+  for (const path of ['/profile/', '/profile']) {
+    const payload = await getJson<GenericRecord>(fetchFn, path, token);
+    if (payload) {
+      return {
+        name: pickString(payload.name) || pickString(payload.username) || 'daily.dev user',
+        username: pickString(payload.username) || undefined,
+        bio: pickString(payload.bio) || undefined,
+        reputation: typeof payload.reputation === 'number' ? payload.reputation : undefined,
+        experienceLevel: pickString(payload.experienceLevel) || undefined
+      };
+    }
+  }
+
+  return null;
+}
+
 export async function importDailyDevActivity(fetchFn: FetchLike, token: string): Promise<{
   activity: ActivityItem[];
   warnings: string[];
   importedSources: string[];
+  profile: ImportedProfile | null;
 }> {
   const trimmedToken = token.trim();
   if (!trimmedToken) {
@@ -174,10 +200,11 @@ export async function importDailyDevActivity(fetchFn: FetchLike, token: string):
   const warnings: string[] = [];
   const importedSources: string[] = [];
 
-  const [bookmarksPayload, feedPayload, stackActivity] = await Promise.all([
-    getJson<unknown>(fetchFn, '/bookmarks?limit=10', trimmedToken),
-    getJson<unknown>(fetchFn, '/feeds?limit=10', trimmedToken),
-    fetchStack(fetchFn, trimmedToken)
+  const [bookmarksPayload, feedPayload, stackActivity, profile] = await Promise.all([
+    getJson<unknown>(fetchFn, '/bookmarks/?limit=10', trimmedToken),
+    getJson<unknown>(fetchFn, '/feeds/foryou?limit=10', trimmedToken),
+    fetchStack(fetchFn, trimmedToken),
+    fetchProfile(fetchFn, trimmedToken)
   ]);
 
   const bookmarks = bookmarksPayload ? normalizeBookmarkPayload(bookmarksPayload) : [];
@@ -202,6 +229,12 @@ export async function importDailyDevActivity(fetchFn: FetchLike, token: string):
     warnings.push('Tech stack data was unavailable from the public API.');
   }
 
+  if (profile) {
+    importedSources.push('profile');
+  } else {
+    warnings.push('Profile details were unavailable from the public API.');
+  }
+
   const activity = [...bookmarks, ...feed, ...stack];
 
   if (activity.length === 0) {
@@ -211,6 +244,7 @@ export async function importDailyDevActivity(fetchFn: FetchLike, token: string):
   return {
     activity,
     warnings,
-    importedSources
+    importedSources,
+    profile
   };
 }

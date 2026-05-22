@@ -20,6 +20,8 @@ npm run dev
 ## Current scope
 
 - live daily.dev token-based import path with demo fallback
+- explicit support for pasted user tokens and server-side env tokens
+- imported profile summary when the public API returns it
 - typed normalization and topic clustering pipeline
 - deterministic generated project recommendation with rationale
 - roadmap, architecture, and learning-goal views
@@ -27,8 +29,14 @@ npm run dev
 ## Live import notes
 
 - Generate a personal access token from daily.dev API Settings.
-- Paste the token into the dashboard to import bookmarks, feed items, and stack signals.
+- Paste the token into the dashboard to import your own profile, bookmarks, and stack signals.
+- If a server token exists in `.env` as `DAILY_DEV_API_TOKEN`, the app can use that for shared local demo sessions.
 - If the API call fails or returns no usable content, the app falls back to demo data so the experience remains usable.
+
+## Documentation
+
+- Product and implementation notes live in [`docs/IMPLEMENTATION_NOTES.md`](./docs/IMPLEMENTATION_NOTES.md).
+- Update that file when behavior changes, especially around API assumptions, fallback rules, and generation heuristics.
 
 ## Next step
 

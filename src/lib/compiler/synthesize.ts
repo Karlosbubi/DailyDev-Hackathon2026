@@ -9,7 +9,9 @@ const topicFamilies: Record<string, string[]> = {
     'cqrs',
     'reliability',
     'event-driven',
-    'streaming'
+    'streaming',
+    'serverless',
+    'kubernetes'
   ],
   'backend systems': [
     'typescript',
@@ -19,9 +21,15 @@ const topicFamilies: Record<string, string[]> = {
     'postgresql',
     'postgres',
     'system design',
-    'node.js'
+    'node.js',
+    'rust',
+    '.net',
+    'elixir',
+    'erlang',
+    'linux',
+    'performance'
   ],
-  observability: ['opentelemetry', 'tracing', 'metrics', 'monitoring', 'analytics', 'logging'],
+  observability: ['opentelemetry', 'tracing', 'metrics', 'monitoring', 'analytics', 'logging', 'mlops'],
   'developer tooling': [
     'sveltekit',
     'next.js',
@@ -30,9 +38,28 @@ const topicFamilies: Record<string, string[]> = {
     'architecture',
     'cloud',
     'devops',
-    'frontend'
+    'frontend',
+    'testing',
+    'code-review',
+    'technical-debt',
+    'productivity',
+    'dependency-injection'
   ],
-  ai: ['llm', 'ai', 'agents', 'prompting', 'embeddings', 'rag', 'vector'],
+  ai: [
+    'llm',
+    'ai',
+    'agents',
+    'prompting',
+    'embeddings',
+    'rag',
+    'vector',
+    'machine-learning',
+    'ai-agents',
+    'ai-inference',
+    'gpu',
+    'python',
+    'jupyter'
+  ],
   frontend: ['frontend', 'ui', 'ux', 'component', 'design system', 'realtime']
 };
 
@@ -124,6 +151,49 @@ function normalizeTag(tag: string): string {
   return tag.trim().toLowerCase();
 }
 
+function extractSignals(item: ActivityItem): string[] {
+  const stopwords = new Set([
+    'a',
+    'an',
+    'and',
+    'for',
+    'from',
+    'how',
+    'in',
+    'into',
+    'is',
+    'of',
+    'on',
+    'the',
+    'to',
+    'with'
+  ]);
+
+  const titleTokens = item.title
+    .toLowerCase()
+    .split(/[^a-z0-9.+-]+/)
+    .filter((token) => token.length > 2 && !stopwords.has(token));
+
+  return [...item.tags.map(normalizeTag), ...titleTokens];
+}
+
+function keywordMatchesSignal(keyword: string, signal: string): boolean {
+  if (signal === keyword) {
+    return true;
+  }
+
+  const signalParts = signal.split(/[^a-z0-9]+/).filter(Boolean);
+  if (signalParts.includes(keyword)) {
+    return true;
+  }
+
+  if (keyword.length >= 4 && signal.includes(keyword)) {
+    return true;
+  }
+
+  return false;
+}
+
 export function clusterTopics(items: ActivityItem[]): Cluster[] {
   const scores = Object.fromEntries(Object.keys(topicFamilies).map((family) => [family, 0]));
   const matchedTags = new Map<string, Set<string>>();
@@ -133,10 +203,12 @@ export function clusterTopics(items: ActivityItem[]): Cluster[] {
   }
 
   for (const item of items) {
-    const normalizedTags = item.tags.map(normalizeTag);
+    const signals = extractSignals(item);
 
     for (const [family, keywords] of Object.entries(topicFamilies)) {
-      const itemMatches = normalizedTags.filter((tag) => keywords.includes(tag));
+      const itemMatches = signals.filter((signal) =>
+        keywords.some((keyword) => keywordMatchesSignal(keyword, signal))
+      );
       if (itemMatches.length > 0) {
         scores[family] += item.weight * itemMatches.length;
         for (const tag of itemMatches) {
@@ -237,6 +309,8 @@ export function buildDemoCompilation(warnings: string[] = []): CompilationResult
     usedFallback: false,
     importedSources: ['demo bookmarks', 'demo history', 'demo stack'],
     importedCount: demoActivity.length,
-    warnings
+    warnings,
+    tokenSource: 'none',
+    profile: null
   });
 }
