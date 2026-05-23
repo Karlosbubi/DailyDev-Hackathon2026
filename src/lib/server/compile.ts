@@ -43,22 +43,26 @@ function buildProjectWriteup(project: ProjectSpec, clusters: Cluster[]): string 
   const firstMilestone = project.milestones[0];
   const secondMilestone = project.milestones[1];
   const primaryRisk = project.architecture[0];
+  const primaryEntity = project.architecture[1]?.[0] || 'Core workflow';
 
   return [
-    'Project framing',
-    `${project.title} is strongest when treated as a focused build rather than a broad concept piece. The combination of ${clusterLine} points toward a system that should demonstrate credible technical depth quickly, using ${stackLine} as the visible implementation backbone.`,
+    'Product framing',
+    `${project.title} should be built as a narrow working tool, not as a broad exploratory concept. The cluster mix around ${clusterLine} suggests a product that helps one developer or small team make better decisions faster, using ${stackLine} as the implementation backbone.`,
     '',
-    'Why this fits',
-    `The recommendation aligns with the current signal set because it turns repeated topic interest into an artifact with operational edges. Instead of another reading loop, the project forces decisions around scope, interfaces, instrumentation, and delivery, which is where the learning value actually compounds.`,
+    'Target user and workflow',
+    `The target user is someone already spending time on these topics but still missing a compact surface that turns signals into action. The first release should support one primary workflow end to end: ingest the relevant inputs, analyze or rank them, and produce an output that makes the next engineering decision easier.`,
+    '',
+    'System shape',
+    `${primaryEntity} should act as the backbone of the system, because that is where most of the product value will accumulate. Keep the architecture honest: one ingestion edge, one analysis or decision layer, and one operator-facing surface is enough for version one.`,
     '',
     'Implementation sequence',
-    `${firstMilestone ? `${firstMilestone[0]} should happen first: ${firstMilestone[1]}` : 'Start by defining the narrowest vertical slice.'} ${secondMilestone ? `${secondMilestone[0]} follows next: ${secondMilestone[1]}` : 'Then add the next major workflow boundary.'} After that, the remaining milestones should tighten observability, workflow quality, and operator usability instead of introducing a second product idea halfway through.`,
+    `${firstMilestone ? `${firstMilestone[0]} should happen first: ${firstMilestone[1]}` : 'Start by defining the narrowest vertical slice.'} ${secondMilestone ? `${secondMilestone[0]} follows next: ${secondMilestone[1]}` : 'Then add the next major workflow boundary.'} After that, spend effort on reliability, workflow clarity, and observability instead of adding a second product idea.`,
     '',
-    'Risks and tradeoffs',
-    `${primaryRisk ? `${primaryRisk[0]} is the first place complexity can sprawl, because ${primaryRisk[1].toLowerCase()}` : 'The largest risk is uncontrolled scope growth.'} The main tradeoff is between shipping a narrow but believable system and overreaching into platform-level ambitions before the core loop is proven.`,
+    'Risks and non-goals',
+    `${primaryRisk ? `${primaryRisk[0]} is the first place complexity can sprawl, because ${primaryRisk[1].toLowerCase()}` : 'The largest risk is uncontrolled scope growth.'} Keep version one away from multi-tenant concerns, broad automation, or highly polished collaboration features unless they are required for the primary workflow to make sense.`,
     '',
     'First build week',
-    `In the first week, establish the repo structure, stub the primary domain model, wire the first storage or transport boundary, and make one milestone executable end to end. The goal is not polish. The goal is to prove that the project summary, stack, and roadmap describe a system that can survive contact with real implementation work.`
+    `In the first week, establish the repo structure, define the core data model, wire the first storage or transport boundary, and make one milestone executable end to end. By the end of that week, the project should already ingest real inputs, produce one useful intermediate result, and expose one visible operator-facing output.`
   ].join('\n');
 }
 

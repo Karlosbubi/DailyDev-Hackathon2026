@@ -98,12 +98,14 @@ function buildFallbackProject(clusters: Cluster[], activity: ActivityItem[]): Pr
   const secondCluster = clusters[1]?.name ?? 'Implementation Systems';
   const topTags = [...new Set(activity.flatMap((item) => item.tags))].slice(0, 5);
   const titleSeed = [topCluster, secondCluster].filter(Boolean).slice(0, 2).join(' ');
+  const dominantTags = topTags.slice(0, 3).join(', ') || 'operational signals';
+  const firstSignal = activity[0]?.title || 'recent technical activity';
 
   return {
     title: `${titleSeed || 'Signal'} Workbench`,
     difficulty: 'Intermediate',
     timeline: '2 to 3 weekends',
-    summary: `Build a portfolio project that packages your strongest current interests around ${topCluster} into a single implementation sprint, with an emphasis on fast feedback loops and a credible technical core.`,
+    summary: `Build a focused ${topCluster.toLowerCase()} workbench for developers who keep running into ${secondCluster.toLowerCase()} decisions during day-to-day work. The first release should ingest ${dominantTags}, turn them into one ranked operating view, and support one concrete workflow from raw signal to action. It should feel closer to a decision-support tool than a content browser, with enough backend shape to make ${firstSignal.toLowerCase()} actionable.`,
     stack: ['TypeScript', topTags[0] ?? 'APIs', topTags[1] ?? 'Data modeling', topTags[2] ?? 'Interface design', 'SvelteKit'],
     architecture: [
       ['Input Layer', 'Imports articles, bookmarks, and stack signals into one normalized stream.'],
@@ -128,13 +130,16 @@ function buildFallbackProject(clusters: Cluster[], activity: ActivityItem[]): Pr
 
 export function synthesizeProject(clusters: Cluster[], activity: ActivityItem[]): ProjectSpec {
   const topNames = clusters.slice(0, 3).map((cluster) => cluster.name);
+  const topItems = activity.slice(0, 3).map((item) => item.title);
   const project = buildFallbackProject(clusters, activity);
   const rationale = [
     topNames.length > 0
-      ? `Dominant clusters: ${topNames.join(' + ')}.`
+      ? `Dominant clusters point toward a single tool surface: ${topNames.join(' + ')}.`
       : 'No dominant clusters were detected; using a general project template.',
-    `Input signal count: ${activity.length} imported items.`,
-    `Most repeated tags: ${[...new Set(activity.flatMap((item) => item.tags))].slice(0, 4).join(', ') || 'n/a'}.`
+    `Imported activity shows repeated pressure around ${[...new Set(activity.flatMap((item) => item.tags))].slice(0, 4).join(', ') || 'n/a'}.`,
+    topItems.length > 0
+      ? `Representative signals include ${topItems.join(' | ')}.`
+      : `Input signal count: ${activity.length} imported items.`
   ];
 
   return {

@@ -527,11 +527,21 @@ function buildProjectFramePrompt(input: {
 
   return [
     'Return one JSON object only.',
-    'Propose one concrete portfolio-worthy software project based on the clusters and activity.',
+    'Propose one concrete software product the developer could realistically build next based on the clusters and activity.',
     'Required top-level key: project.',
     'project must contain: title, difficulty, timeline, summary, stack, rationale.',
     'stack and rationale must be arrays of strings.',
-    'Keep the title specific and the summary implementation-oriented.',
+    'The title must name an actual product, tool, or system, not a broad topic.',
+    'The summary must be 3 to 5 sentences and explicitly answer all of these:',
+    '1. who the tool is for,',
+    '2. what painful workflow or decision it improves,',
+    '3. what the first release actually does end to end,',
+    '4. what technical shape makes it interesting to build.',
+    'The summary must name at least two concrete capabilities or workflows.',
+    'The rationale array must contain exactly 3 short evidence-based reasons tied to clusters, tags, or imported activity.',
+    'Do not use generic filler like "portfolio project", "strongest interests", "credible technical core", "implementation sprint", or "platform for X".',
+    'Prefer concrete nouns like dashboard, reviewer, agent, queue, parser, indexer, benchmark runner, triage console, compiler, or workbench.',
+    'Example: {"project":{"title":"Rust Build Regression Workbench","difficulty":"Intermediate","timeline":"2 to 3 weekends","summary":"Build a local diagnostics tool for developers who bounce between Rust performance articles, Linux internals, and CI debugging. The first release ingests benchmark runs, compiler timings, and profiling traces, then correlates regressions to dependency changes and build configuration shifts. It should let a single developer compare two revisions, annotate likely causes, and export a concise regression report. The interesting part is the analysis pipeline, not just the UI, because it has to normalize heterogeneous signals and rank plausible root causes.","stack":["Rust","SQLite","Tracing","SvelteKit"],"rationale":["Repeated Rust and Linux signals suggest interest in systems-level developer tooling.","Performance and productivity tags point toward instrumentation instead of content publishing.","Discussion and bookmark activity indicate sustained attention on debugging workflows."]}}',
     'Output valid JSON only.',
     JSON.stringify(compact)
   ].join('\n');
@@ -693,10 +703,12 @@ function buildProjectWriteupPrompt(input: {
   return [
     'Write a detailed implementation brief for the proposed software project.',
     'Return plain text only. Do not return JSON or markdown code fences.',
-    'Use 5 short sections with clear headings in sentence case.',
-    'Cover: project framing, why this fits the developer, implementation sequence, main risks/tradeoffs, and a concrete first build week.',
-    'Be specific and practical. Reference the actual stack, milestones, and clusters.',
-    'Keep the tone direct and technical, around 450 to 700 words.',
+    'Use 6 short sections with clear headings in sentence case.',
+    'Cover: product framing, target user and workflow, system shape, implementation sequence, main risks and deliberate non-goals, and a concrete first build week.',
+    'Be specific and practical. Reference the actual stack, milestones, architecture, and clusters.',
+    'Name the core entities, one primary user path, and what the first release intentionally does not include.',
+    'Avoid generic advice, motivational language, and phrases like "portfolio project" or "credible technical core".',
+    'Keep the tone direct and technical, around 550 to 850 words.',
     JSON.stringify(compact)
   ].join('\n');
 }
@@ -809,7 +821,16 @@ function sanitizeWriteupText(value: string | null | undefined): string | null {
   }
 
   const cleaned = normalized.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
-  return cleaned.length >= 160 ? cleaned : null;
+  const genericMarkers = [
+    'build a portfolio project',
+    'strongest current interests',
+    'credible technical core',
+    'implementation sprint',
+    'another reading loop'
+  ];
+  const genericHitCount = genericMarkers.filter((marker) => cleaned.toLowerCase().includes(marker)).length;
+
+  return cleaned.length >= 220 && genericHitCount < 3 ? cleaned : null;
 }
 
 async function requestOpenAiContent(
