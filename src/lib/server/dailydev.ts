@@ -1,4 +1,4 @@
-import type { ActivityItem } from '$lib/compiler/types';
+import type { ActivityItem, ImportedProfile, ImportSourceName } from '$lib/compiler/types';
 
 const DAILY_DEV_API_BASE = 'https://api.daily.dev/public/v1';
 
@@ -12,12 +12,14 @@ interface GenericRecord {
   [key: string]: unknown;
 }
 
-export interface ImportedProfile {
-  name: string;
-  username?: string;
-  bio?: string;
-  reputation?: number;
-  experienceLevel?: string;
+export interface ImportProgressPayload {
+  source: ImportSourceName;
+  status: 'success' | 'empty' | 'error';
+  activity: ActivityItem[];
+  importedCount: number;
+  importedSources: string[];
+  warnings: string[];
+  profile: ImportedProfile | null;
 }
 
 export class DailyDevApiError extends Error {
@@ -132,7 +134,17 @@ function normalizeStackPayload(payload: unknown): ActivityItem[] {
 
       if (item && typeof item === 'object') {
         const record = item as GenericRecord;
-        return pickString(record.name) || pickString(record.label);
+        const tool = (record.tool && typeof record.tool === 'object'
+          ? (record.tool as GenericRecord)
+          : null);
+
+        return (
+          pickString(record.title) ||
+          pickString(record.name) ||
+          pickString(record.label) ||
+          pickString(tool?.title) ||
+          pickString(tool?.name)
+        );
       }
 
       return '';
@@ -186,7 +198,36 @@ async function fetchProfile(fetchFn: FetchLike, token: string): Promise<Imported
   return null;
 }
 
-export async function importDailyDevActivity(fetchFn: FetchLike, token: string): Promise<{
+async function loadOptionalSource<T>(
+  load: () => Promise<T>,
+  source: ImportSourceName
+): Promise<{ data: T | null; errorWarning?: string }> {
+  try {
+    return { data: await load() };
+  } catch (error) {
+    if (error instanceof DailyDevApiError && [401, 403].includes(error.status)) {
+      throw error;
+    }
+
+    if (error instanceof DailyDevApiError) {
+      return {
+        data: null,
+        errorWarning: `${source[0].toUpperCase()}${source.slice(1)} import failed (${error.status}).`
+      };
+    }
+
+    return {
+      data: null,
+      errorWarning: `${source[0].toUpperCase()}${source.slice(1)} import failed unexpectedly.`
+    };
+  }
+}
+
+export async function importDailyDevActivity(
+  fetchFn: FetchLike,
+  token: string,
+  onProgress?: (payload: ImportProgressPayload) => void | Promise<void>
+): Promise<{
   activity: ActivityItem[];
   warnings: string[];
   importedSources: string[];
@@ -199,43 +240,89 @@ export async function importDailyDevActivity(fetchFn: FetchLike, token: string):
 
   const warnings: string[] = [];
   const importedSources: string[] = [];
+  const activity: ActivityItem[] = [];
+  let profile: ImportedProfile | null = null;
 
-  const [bookmarksPayload, feedPayload, stackActivity, profile] = await Promise.all([
-    getJson<unknown>(fetchFn, '/bookmarks/?limit=10', trimmedToken),
-    getJson<unknown>(fetchFn, '/feeds/foryou?limit=10', trimmedToken),
-    fetchStack(fetchFn, trimmedToken),
-    fetchProfile(fetchFn, trimmedToken)
-  ]);
+  async function emitProgress(source: ImportSourceName, status: 'success' | 'empty' | 'error') {
+    if (!onProgress) {
+      return;
+    }
 
-  const bookmarks = bookmarksPayload ? normalizeBookmarkPayload(bookmarksPayload) : [];
-  const feed = feedPayload ? normalizeFeedPayload(feedPayload) : [];
-  const stack = stackActivity;
-
-  if (bookmarks.length > 0) {
-    importedSources.push('bookmarks');
-  } else {
-    warnings.push('No bookmarks were returned from the public API.');
+    await onProgress({
+      source,
+      status,
+      activity: [...activity],
+      importedCount: activity.length,
+      importedSources: [...importedSources],
+      warnings: [...warnings],
+      profile
+    });
   }
 
-  if (feed.length > 0) {
-    importedSources.push('feed');
-  } else {
-    warnings.push('No feed items were returned from the public API.');
-  }
+  const profileResult = await loadOptionalSource(() => fetchProfile(fetchFn, trimmedToken), 'profile');
+  profile = profileResult.data;
 
-  if (stack.length > 0) {
-    importedSources.push('stack');
-  } else {
-    warnings.push('Tech stack data was unavailable from the public API.');
-  }
-
-  if (profile) {
+  if (profileResult.errorWarning) {
+    warnings.push(profileResult.errorWarning);
+    await emitProgress('profile', 'error');
+  } else if (profile) {
     importedSources.push('profile');
+    await emitProgress('profile', 'success');
   } else {
     warnings.push('Profile details were unavailable from the public API.');
+    await emitProgress('profile', 'empty');
   }
 
-  const activity = [...bookmarks, ...feed, ...stack];
+  const bookmarkResult = await loadOptionalSource(
+    () => getJson<unknown>(fetchFn, '/bookmarks/?limit=10', trimmedToken),
+    'bookmarks'
+  );
+  const bookmarks = bookmarkResult.data ? normalizeBookmarkPayload(bookmarkResult.data) : [];
+
+  if (bookmarkResult.errorWarning) {
+    warnings.push(bookmarkResult.errorWarning);
+    await emitProgress('bookmarks', 'error');
+  } else if (bookmarks.length > 0) {
+    importedSources.push('bookmarks');
+    activity.push(...bookmarks);
+    await emitProgress('bookmarks', 'success');
+  } else {
+    warnings.push('No bookmarks were returned from the public API.');
+    await emitProgress('bookmarks', 'empty');
+  }
+
+  const feedResult = await loadOptionalSource(
+    () => getJson<unknown>(fetchFn, '/feeds/foryou?limit=10', trimmedToken),
+    'feed'
+  );
+  const feed = feedResult.data ? normalizeFeedPayload(feedResult.data) : [];
+
+  if (feedResult.errorWarning) {
+    warnings.push(feedResult.errorWarning);
+    await emitProgress('feed', 'error');
+  } else if (feed.length > 0) {
+    importedSources.push('feed');
+    activity.push(...feed);
+    await emitProgress('feed', 'success');
+  } else {
+    warnings.push('No feed items were returned from the public API.');
+    await emitProgress('feed', 'empty');
+  }
+
+  const stackResult = await loadOptionalSource(() => fetchStack(fetchFn, trimmedToken), 'stack');
+  const stack = stackResult.data ?? [];
+
+  if (stackResult.errorWarning) {
+    warnings.push(stackResult.errorWarning);
+    await emitProgress('stack', 'error');
+  } else if (stack.length > 0) {
+    importedSources.push('stack');
+    activity.push(...stack);
+    await emitProgress('stack', 'success');
+  } else {
+    warnings.push('No tech stack items were found on the profile.');
+    await emitProgress('stack', 'empty');
+  }
 
   if (activity.length === 0) {
     warnings.push('Live import returned zero usable items.');

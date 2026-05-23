@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type {
+    ActivityItem,
     CompilationResult,
+    CompilationStreamEvent,
+    ImportedProfile,
     LlmProvider,
     LlmServerConfigSummary,
     LlmSettings
@@ -19,6 +22,13 @@
   let isLoading = false;
   let error = '';
   let overrideLlm = false;
+  let streamPhase: 'idle' | 'starting' | 'importing' | 'synthesizing' | 'refining' | 'complete' = 'idle';
+  let streamMessage = '';
+  let partialActivity: ActivityItem[] = [];
+  let partialWarnings: string[] = [];
+  let partialImportedSources: string[] = [];
+  let partialImportedCount = 0;
+  let partialProfile: ImportedProfile | null = null;
 
   let llmProvider: LlmProvider = data.serverLlmConfig.provider;
   let llmModel = data.serverLlmConfig.model;
@@ -40,12 +50,27 @@
   const openAiModels = ['gpt-5-mini', 'gpt-5', 'gpt-4.1-mini'];
   const ollamaModels = ['llama3.1:8b', 'qwen2.5-coder:7b', 'mistral:7b'];
 
+  $: visibleActivity = compilation?.activity ?? partialActivity;
+  $: visibleImportedCount = compilation?.importSummary.importedCount ?? partialImportedCount;
+  $: visibleImportedSources = compilation?.importSummary.importedSources ?? partialImportedSources;
+  $: visibleProfile = compilation?.importSummary.profile ?? partialProfile;
+  $: importWarnings = compilation?.importSummary.warnings ?? partialWarnings;
+  $: generationWarnings = compilation?.generation.warnings ?? [];
+
   async function compile(mode: 'server' | 'manual' | 'demo') {
     isLoading = true;
     error = '';
+    compilation = null;
+    streamPhase = 'starting';
+    streamMessage = mode === 'demo' ? 'Preparing demo data.' : 'Preparing live import.';
+    partialActivity = [];
+    partialWarnings = [];
+    partialImportedSources = [];
+    partialImportedCount = 0;
+    partialProfile = null;
 
     try {
-      const response = await fetch('/api/compile', {
+      const response = await fetch('/api/compile/stream', {
         method: 'POST',
         headers: {
           'content-type': 'application/json'
@@ -68,7 +93,92 @@
         throw new Error(`Compile request failed with ${response.status}`);
       }
 
-      compilation = (await response.json()) as CompilationResult;
+      if (!response.body) {
+        throw new Error('Compile stream returned no body');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            continue;
+          }
+
+          const event = JSON.parse(trimmed) as CompilationStreamEvent;
+
+          if (event.type === 'status') {
+            streamPhase = event.phase;
+            streamMessage = event.message;
+            continue;
+          }
+
+          if (event.type === 'source') {
+            partialActivity = event.activity;
+            partialImportedCount = event.importedCount;
+            partialImportedSources = event.importedSources;
+            partialWarnings = event.warnings;
+            partialProfile = event.profile;
+            streamPhase = 'importing';
+            streamMessage = `${event.source[0].toUpperCase()}${event.source.slice(1)} ${event.status}.`;
+            continue;
+          }
+
+          if (event.type === 'result') {
+            compilation = event.result;
+            partialActivity = event.result.activity;
+            partialImportedCount = event.result.importSummary.importedCount;
+            partialImportedSources = event.result.importSummary.importedSources;
+            partialWarnings = event.result.importSummary.warnings;
+            partialProfile = event.result.importSummary.profile ?? null;
+            streamPhase = 'complete';
+            streamMessage = 'Compilation complete.';
+            continue;
+          }
+
+          if (event.type === 'error') {
+            throw new Error(event.message);
+          }
+        }
+      }
+
+      const finalLine = buffer.trim();
+      if (finalLine) {
+        const event = JSON.parse(finalLine) as CompilationStreamEvent;
+        if (event.type === 'result') {
+          compilation = event.result;
+          partialActivity = event.result.activity;
+          partialImportedCount = event.result.importSummary.importedCount;
+          partialImportedSources = event.result.importSummary.importedSources;
+          partialWarnings = event.result.importSummary.warnings;
+          partialProfile = event.result.importSummary.profile ?? null;
+          streamPhase = 'complete';
+          streamMessage = 'Compilation complete.';
+        } else if (event.type === 'error') {
+          throw new Error(event.message);
+        } else if (event.type === 'status') {
+          streamPhase = event.phase;
+          streamMessage = event.message;
+        } else if (event.type === 'source') {
+          partialActivity = event.activity;
+          partialImportedCount = event.importedCount;
+          partialImportedSources = event.importedSources;
+          partialWarnings = event.warnings;
+          partialProfile = event.profile;
+        }
+      }
     } catch (err) {
       error = err instanceof Error ? err.message : 'Unknown compile error';
     } finally {
@@ -221,6 +331,10 @@
           <span class="w-fit rounded-full bg-black/[0.06] px-3 py-2 text-sm text-black/70">
             {compilation.importSummary.mode === 'live' ? 'Live daily.dev import' : 'Demo fallback'}
           </span>
+        {:else if isLoading}
+          <span class="w-fit rounded-full bg-moss-500/10 px-3 py-2 text-sm text-moss-600">
+            {streamPhase === 'refining' ? 'Refining output' : 'Streaming import'}
+          </span>
         {/if}
       </div>
 
@@ -228,45 +342,51 @@
         <p class="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
       {/if}
 
-      {#if compilation}
+      {#if isLoading && streamMessage}
+        <p class="mt-4 rounded-2xl border border-moss-200 bg-moss-500/8 px-4 py-3 text-sm text-moss-700">
+          {streamMessage}
+        </p>
+      {/if}
+
+      {#if compilation || isLoading}
         <div class="mt-5 grid gap-4 md:grid-cols-6">
           <article class="surface-card rounded-2xl p-4">
             <p class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Token source</p>
-            <p class="text-sm leading-6 text-black/70">{compilation.importSummary.tokenSource ?? 'none'}</p>
+            <p class="text-sm leading-6 text-black/70">{compilation?.importSummary.tokenSource ?? (token.trim() ? 'manual' : data.hasServerToken ? 'server' : 'none')}</p>
           </article>
           <article class="surface-card rounded-2xl p-4">
             <p class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Imported items</p>
-            <p class="text-2xl font-bold">{compilation.importSummary.importedCount}</p>
+            <p class="text-2xl font-bold">{visibleImportedCount}</p>
           </article>
           <article class="surface-card rounded-2xl p-4">
             <p class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Sources</p>
-            <p class="text-sm leading-6 text-black/70">{compilation.importSummary.importedSources.join(', ') || 'demo dataset'}</p>
+            <p class="text-sm leading-6 text-black/70">{visibleImportedSources.join(', ') || (compilation ? 'demo dataset' : 'Waiting for imports')}</p>
           </article>
           <article class="surface-card rounded-2xl p-4">
             <p class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Generation</p>
-            <p class="text-sm leading-6 text-black/70">{compilation.generation.strategy}</p>
+            <p class="text-sm leading-6 text-black/70">{compilation?.generation.strategy ?? (streamPhase === 'refining' ? 'llm pending' : 'deterministic pending')}</p>
           </article>
           <article class="surface-card rounded-2xl p-4">
             <p class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Provider</p>
-            <p class="text-sm leading-6 text-black/70">{compilation.generation.provider}</p>
+            <p class="text-sm leading-6 text-black/70">{compilation?.generation.provider ?? (overrideLlm ? llmProvider : data.serverLlmConfig.provider)}</p>
           </article>
           <article class="surface-card rounded-2xl p-4">
             <p class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Model</p>
-            <p class="text-sm leading-6 text-black/70">{compilation.generation.model ?? 'n/a'}</p>
+            <p class="text-sm leading-6 text-black/70">{compilation?.generation.model ?? (overrideLlm ? llmModel || 'n/a' : data.serverLlmConfig.model || 'n/a')}</p>
           </article>
         </div>
 
-        {#if compilation.importSummary.profile}
+        {#if visibleProfile}
           <article class="surface-card mt-4 rounded-2xl p-4">
             <p class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Imported profile</p>
-            <h3 class="text-lg font-semibold text-ink-900">{compilation.importSummary.profile.name}</h3>
-            <p class="text-sm text-black/60">{compilation.importSummary.profile.username ? `@${compilation.importSummary.profile.username}` : 'No public handle returned'}</p>
+            <h3 class="text-lg font-semibold text-ink-900">{visibleProfile.name}</h3>
+            <p class="text-sm text-black/60">{visibleProfile.username ? `@${visibleProfile.username}` : 'No public handle returned'}</p>
           </article>
         {/if}
 
-        {#if compilation.importSummary.warnings.length > 0 || compilation.generation.warnings.length > 0}
+        {#if importWarnings.length > 0 || generationWarnings.length > 0}
           <div class="mt-4 grid gap-2">
-            {#each [...compilation.importSummary.warnings, ...compilation.generation.warnings] as warning}
+            {#each [...importWarnings, ...generationWarnings] as warning}
               <p class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{warning}</p>
             {/each}
           </div>
@@ -280,8 +400,8 @@
       <p class="mb-2 font-mono text-xs uppercase tracking-[0.22em] text-moss-500">Input</p>
       <h2 class="mb-5 text-xl font-semibold">Developer Activity</h2>
       <div class="grid gap-4">
-        {#if compilation}
-          {#each compilation.activity as item}
+        {#if visibleActivity.length > 0}
+          {#each visibleActivity as item}
             <article class="surface-card rounded-2xl p-4">
               <div class="mb-3 flex items-start justify-between gap-3">
                 <span class="font-mono text-xs uppercase tracking-[0.16em] text-moss-500">{activityLabels[item.type]}</span>
@@ -295,6 +415,10 @@
               </div>
             </article>
           {/each}
+        {:else if isLoading}
+          <article class="surface-card rounded-2xl p-4">
+            <p class="text-sm leading-6 text-black/60">Waiting for imported activity items to arrive.</p>
+          </article>
         {/if}
       </div>
     </section>
@@ -339,6 +463,14 @@
               {/each}
             </ul>
           </div>
+        </article>
+      {:else if isLoading}
+        <article class="surface-card rounded-2xl p-5 md:p-6">
+          <p class="mb-2 font-mono text-xs uppercase tracking-[0.22em] text-moss-500">In Progress</p>
+          <h3 class="text-2xl font-bold text-ink-900">Waiting for synthesis</h3>
+          <p class="mt-4 text-base leading-7 text-black/60">
+            Imports stream in immediately. The final project recommendation appears after clustering and optional LLM refinement finish.
+          </p>
         </article>
       {/if}
     </section>

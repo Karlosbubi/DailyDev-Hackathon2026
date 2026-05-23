@@ -80,3 +80,46 @@ export interface CompilationResult {
   importSummary: ImportSummary;
   generation: GenerationSummary;
 }
+
+export interface ImportedProfile {
+  name: string;
+  username?: string;
+  bio?: string;
+  reputation?: number;
+  experienceLevel?: string;
+}
+
+export type ImportSourceName = 'profile' | 'bookmarks' | 'feed' | 'stack';
+
+export interface CompilationStatusEvent {
+  type: 'status';
+  phase: 'starting' | 'importing' | 'synthesizing' | 'refining' | 'complete';
+  message: string;
+}
+
+export interface CompilationSourceEvent {
+  type: 'source';
+  source: ImportSourceName;
+  status: 'success' | 'empty' | 'error';
+  activity: ActivityItem[];
+  importedCount: number;
+  importedSources: string[];
+  warnings: string[];
+  profile: ImportedProfile | null;
+}
+
+export interface CompilationResultEvent {
+  type: 'result';
+  result: CompilationResult;
+}
+
+export interface CompilationErrorEvent {
+  type: 'error';
+  message: string;
+}
+
+export type CompilationStreamEvent =
+  | CompilationStatusEvent
+  | CompilationSourceEvent
+  | CompilationResultEvent
+  | CompilationErrorEvent;

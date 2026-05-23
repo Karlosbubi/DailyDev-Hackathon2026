@@ -2,6 +2,7 @@ import { env } from '$env/dynamic/private';
 import type {
   ActivityItem,
   Cluster,
+  ImportedProfile,
   LlmProvider,
   LlmServerConfigSummary,
   LlmSettings,
@@ -16,16 +17,29 @@ interface LlmResult {
   used: boolean;
 }
 
-interface ImportedProfile {
-  name: string;
-  username?: string;
-  bio?: string;
-  reputation?: number;
-  experienceLevel?: string;
+interface LlmAnalysisResult {
+  clusters?: Cluster[];
+  project?: ProjectSpec;
+  warnings: string[];
+  provider: LlmProvider;
+  model?: string;
+  used: boolean;
 }
 
-const DEFAULT_LLM_TIMEOUT_MS = 15000;
-const OLLAMA_TIMEOUT_MS = 45000;
+interface LlmAnalysisPayload {
+  clusters?: unknown;
+  project?: unknown;
+}
+
+function readTimeoutMs(value: string | undefined, fallbackMs: number): number {
+  const parsed = Number(value?.trim() || '');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackMs;
+}
+
+const DEFAULT_LLM_TIMEOUT_MS = readTimeoutMs(env.LLM_TIMEOUT_MS, 60000);
+const OPENAI_TIMEOUT_MS = readTimeoutMs(env.OPENAI_TIMEOUT_MS, 120000);
+const COMPATIBLE_TIMEOUT_MS = readTimeoutMs(env.COMPATIBLE_TIMEOUT_MS, 120000);
+const OLLAMA_TIMEOUT_MS = readTimeoutMs(env.OLLAMA_TIMEOUT_MS, 180000);
 
 async function fetchWithTimeout(
   input: string,
@@ -94,63 +108,96 @@ function trimPairList(value: unknown): [string, string][] {
       }
 
       const [a, b] = item;
-      const aNorm = a.toLowerCase();
-      const bNorm = b.toLowerCase();
-
-      if (placeholderValues.has(aNorm) || placeholderValues.has(bNorm)) {
-        return false;
-      }
-
-      return true;
+      return !placeholderValues.has(a.toLowerCase()) && !placeholderValues.has(b.toLowerCase());
     })
     .slice(0, 6);
 }
 
-function sanitizeProject(project: Partial<ProjectSpec>): Partial<ProjectSpec> | null {
-  const next: Partial<ProjectSpec> = {};
-
-  if (typeof project.title === 'string' && project.title.trim()) {
-    next.title = project.title.trim();
-  }
-
-  if (typeof project.difficulty === 'string' && project.difficulty.trim()) {
-    next.difficulty = project.difficulty.trim();
-  }
-
-  if (typeof project.timeline === 'string' && project.timeline.trim()) {
-    next.timeline = project.timeline.trim();
-  }
-
-  if (typeof project.summary === 'string' && project.summary.trim()) {
-    next.summary = project.summary.trim();
-  }
-
+function sanitizeProject(project: Partial<ProjectSpec>): ProjectSpec | null {
+  const title = typeof project.title === 'string' ? project.title.trim() : '';
+  const difficulty = typeof project.difficulty === 'string' ? project.difficulty.trim() : '';
+  const timeline = typeof project.timeline === 'string' ? project.timeline.trim() : '';
+  const summary = typeof project.summary === 'string' ? project.summary.trim() : '';
   const stack = trimList(project.stack);
-  if (stack.length > 0) {
-    next.stack = stack;
-  }
-
   const architecture = trimPairList(project.architecture);
-  if (architecture.length > 0) {
-    next.architecture = architecture;
-  }
-
   const milestones = trimPairList(project.milestones);
-  if (milestones.length > 0) {
-    next.milestones = milestones;
-  }
-
   const learningGoals = trimList(project.learningGoals);
-  if (learningGoals.length > 0) {
-    next.learningGoals = learningGoals;
-  }
-
   const rationale = trimList(project.rationale);
-  if (rationale.length > 0) {
-    next.rationale = rationale;
+
+  if (
+    !title ||
+    !difficulty ||
+    !timeline ||
+    summary.length < 40 ||
+    stack.length < 3 ||
+    architecture.length < 3 ||
+    milestones.length < 3 ||
+    learningGoals.length < 2 ||
+    rationale.length < 2
+  ) {
+    return null;
   }
 
-  return Object.keys(next).length > 0 ? next : null;
+  return {
+    title,
+    difficulty,
+    timeline,
+    summary,
+    stack,
+    architecture,
+    milestones,
+    learningGoals,
+    rationale
+  };
+}
+
+function sanitizeClusters(value: unknown): Cluster[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const record = item as Record<string, unknown>;
+      const name = typeof record.name === 'string' ? record.name.trim() : '';
+      const rawScore = typeof record.score === 'number' ? record.score : Number(record.score ?? 0);
+      const score = Number.isFinite(rawScore) && rawScore > 0 ? Number(rawScore.toFixed(2)) : 0;
+      const relatedTags = trimList(record.relatedTags);
+
+      if (!name || score <= 0) {
+        return null;
+      }
+
+      return {
+        name,
+        score,
+        relatedTags: relatedTags.slice(0, 4)
+      } satisfies Cluster;
+    })
+    .filter((item): item is Cluster => Boolean(item))
+    .slice(0, 5);
+}
+
+function sanitizeAnalysis(payload: LlmAnalysisPayload | null): { clusters?: Cluster[]; project?: ProjectSpec } | null {
+  if (!payload) {
+    return null;
+  }
+
+  const project = sanitizeProject((payload.project ?? {}) as Partial<ProjectSpec>);
+  const clusters = sanitizeClusters(payload.clusters);
+
+  if (!project || clusters.length === 0) {
+    return null;
+  }
+
+  return {
+    clusters,
+    project
+  };
 }
 
 function resolveOpenAiKey(override?: string): string {
@@ -172,7 +219,11 @@ function resolveServerProvider(): LlmProvider {
 
 function resolveServerModel(provider: LlmProvider): string {
   const providerSpecific =
-    provider === 'ollama' ? env.OLLAMA_MODEL?.trim() : provider === 'compatible' ? env.COMPATIBLE_API_MODEL?.trim() : undefined;
+    provider === 'ollama'
+      ? env.OLLAMA_MODEL?.trim()
+      : provider === 'compatible'
+        ? env.COMPATIBLE_API_MODEL?.trim()
+        : undefined;
   if (providerSpecific) {
     return providerSpecific;
   }
@@ -226,7 +277,69 @@ function resolveServerApiToken(provider: LlmProvider): string | undefined {
   return undefined;
 }
 
-function buildPrompt(input: {
+function summarizeActivity(activity: ActivityItem[]): Array<{ title: string; tags: string[]; type: string; weight: number }> {
+  return activity.slice(0, 12).map((item) => ({
+    title: item.title,
+    tags: item.tags.slice(0, 6),
+    type: item.type,
+    weight: item.weight
+  }));
+}
+
+function buildAnalysisPrompt(input: {
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+}): string {
+  const compact = {
+    profile: input.profile,
+    activity: summarizeActivity(input.activity)
+  };
+
+  return [
+    'Return one JSON object only.',
+    'Analyze the developer profile and activity, then propose a concrete portfolio-worthy software project.',
+    'Use the activity to infer 3 to 5 technical interest clusters and one project that directly fits those interests.',
+    'Do not include markdown or commentary.',
+    'Required top-level keys: clusters, project.',
+    'clusters must be an array of objects with keys: name, score, relatedTags.',
+    'Use numeric positive scores. relatedTags must be an array of strings.',
+    'project must contain keys: title, difficulty, timeline, summary, stack, architecture, milestones, learningGoals, rationale.',
+    'architecture and milestones must be arrays of [title, description] pairs.',
+    'stack, learningGoals, and rationale must be arrays of strings.',
+    'Avoid generic placeholder titles or boilerplate milestone names.',
+    JSON.stringify(compact)
+  ].join('\n');
+}
+
+function buildOllamaAnalysisPrompt(input: {
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+}): string {
+  const compact = {
+    profile: input.profile
+      ? {
+          name: input.profile.name,
+          username: input.profile.username,
+          experienceLevel: input.profile.experienceLevel
+        }
+      : null,
+    activity: summarizeActivity(input.activity)
+  };
+
+  return [
+    'Output JSON only.',
+    'Analyze the developer profile and activity.',
+    'Return 3 to 5 interest clusters and one concrete portfolio project.',
+    'Required top-level keys: clusters, project.',
+    'Each cluster must have: name, score, relatedTags.',
+    'The project must have: title, difficulty, timeline, summary, stack, architecture, milestones, learningGoals, rationale.',
+    'For architecture and milestones, return arrays of two-item arrays like [["Name","Description"]].',
+    'Do not use placeholder values like "Name", "Description", "Step", or "Project Recommendation".',
+    JSON.stringify(compact)
+  ].join('\n');
+}
+
+function buildRefinementPrompt(input: {
   profile: ImportedProfile | null | undefined;
   activity: ActivityItem[];
   clusters: Cluster[];
@@ -234,11 +347,7 @@ function buildPrompt(input: {
 }): string {
   const compact = {
     profile: input.profile,
-    topActivity: input.activity.map((item) => ({
-      title: item.title,
-      tags: item.tags,
-      type: item.type
-    })),
+    topActivity: summarizeActivity(input.activity),
     clusters: input.clusters,
     baselineProject: input.project
   };
@@ -255,7 +364,7 @@ function buildPrompt(input: {
   ].join('\n');
 }
 
-function buildOllamaPrompt(input: {
+function buildOllamaRefinementPrompt(input: {
   profile: ImportedProfile | null | undefined;
   activity: ActivityItem[];
   clusters: Cluster[];
@@ -269,10 +378,7 @@ function buildOllamaPrompt(input: {
           experienceLevel: input.profile.experienceLevel
         }
       : null,
-    topActivity: input.activity.slice(0, 5).map((item) => ({
-      title: item.title,
-      tags: item.tags
-    })),
+    topActivity: summarizeActivity(input.activity).slice(0, 5),
     topClusters: input.clusters.slice(0, 3).map((cluster) => ({
       name: cluster.name,
       tags: cluster.relatedTags
@@ -296,178 +402,186 @@ function buildOllamaPrompt(input: {
   ].join('\n');
 }
 
-async function callOpenAi(settings: LlmSettings, prompt: string): Promise<LlmResult> {
+async function requestOpenAiText(settings: LlmSettings, prompt: string): Promise<string | null> {
   const apiKey = resolveOpenAiKey(settings.apiToken);
   if (!apiKey) {
-    return {
-      warnings: ['OpenAI provider selected, but no API key was available.'],
-      provider: 'openai',
-      model: settings.model,
-      used: false
-    };
+    return null;
   }
 
-  const response = await fetchWithTimeout('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      input: prompt,
-      text: {
-        format: {
-          type: 'json_object'
+  const response = await fetchWithTimeout(
+    'https://api.openai.com/v1/responses',
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        input: prompt,
+        text: {
+          format: {
+            type: 'json_object'
+          }
         }
-      }
-    })
-  });
+      })
+    },
+    OPENAI_TIMEOUT_MS
+  );
 
   if (!response.ok) {
-    return {
-      warnings: [`OpenAI request failed with status ${response.status}.`],
-      provider: 'openai',
-      model: settings.model,
-      used: false
-    };
+    throw new Error(`OpenAI request failed with status ${response.status}.`);
   }
 
-  const payload = (await response.json()) as {
-    output_text?: string;
-  };
-
-  const parsed = safeJsonParse<Partial<ProjectSpec>>(payload.output_text ?? '');
-  const sanitized = parsed ? sanitizeProject(parsed) : null;
-
-  return {
-    project: sanitized ?? undefined,
-    warnings: sanitized ? [] : ['OpenAI returned an unreadable project payload.'],
-    provider: 'openai',
-    model: settings.model,
-    used: Boolean(sanitized)
-  };
+  const payload = (await response.json()) as { output_text?: string };
+  return payload.output_text ?? null;
 }
 
-async function callCompatible(settings: LlmSettings, prompt: string): Promise<LlmResult> {
+async function requestCompatibleText(settings: LlmSettings, prompt: string): Promise<string | null> {
   const baseUrl = settings.baseUrl?.trim();
   const token = settings.apiToken?.trim();
 
   if (!baseUrl || !token) {
-    return {
-      warnings: ['Compatible API provider requires both base URL and token.'],
-      provider: 'compatible',
-      model: settings.model,
-      used: false
-    };
+    return null;
   }
 
-  const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      messages: [
-        {
-          role: 'system',
-          content: 'Return valid JSON only.'
-        },
-        {
-          role: 'user',
-          content: prompt
+  const response = await fetchWithTimeout(
+    `${baseUrl.replace(/\/$/, '')}/chat/completions`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        messages: [
+          {
+            role: 'system',
+            content: 'Return valid JSON only.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        response_format: {
+          type: 'json_object'
         }
-      ],
-      response_format: {
-        type: 'json_object'
-      }
-    })
-  });
+      })
+    },
+    COMPATIBLE_TIMEOUT_MS
+  );
 
   if (!response.ok) {
-    return {
-      warnings: [`Compatible API request failed with status ${response.status}.`],
-      provider: 'compatible',
-      model: settings.model,
-      used: false
-    };
+    throw new Error(`Compatible API request failed with status ${response.status}.`);
   }
 
   const payload = (await response.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
 
-  const text = payload.choices?.[0]?.message?.content ?? '';
-  const parsed = safeJsonParse<Partial<ProjectSpec>>(text);
-  const sanitized = parsed ? sanitizeProject(parsed) : null;
-
-  return {
-    project: sanitized ?? undefined,
-    warnings: sanitized ? [] : ['Compatible API returned an unreadable project payload.'],
-    provider: 'compatible',
-    model: settings.model,
-    used: Boolean(sanitized)
-  };
+  return payload.choices?.[0]?.message?.content ?? null;
 }
 
-async function callOllama(settings: LlmSettings, prompt: string): Promise<LlmResult> {
+async function requestOllamaText(settings: LlmSettings, prompt: string): Promise<string | null> {
   const baseUrl = normalizeOllamaBaseUrl(settings.baseUrl);
 
-  const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, '')}/chat`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json'
+  const response = await fetchWithTimeout(
+    `${baseUrl.replace(/\/$/, '')}/chat`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        stream: false,
+        format: 'json',
+        messages: [
+          {
+            role: 'system',
+            content: 'Return valid JSON only.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ]
+      })
     },
-    body: JSON.stringify({
-      model: settings.model,
-      stream: false,
-      format: 'json',
-      messages: [
-        {
-          role: 'system',
-          content: 'Return valid JSON only.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
-    })
-  }, OLLAMA_TIMEOUT_MS);
+    OLLAMA_TIMEOUT_MS
+  );
 
   if (!response.ok) {
-    return {
-      warnings: [`Ollama request failed with status ${response.status}.`],
-      provider: 'ollama',
-      model: settings.model,
-      used: false
-    };
+    throw new Error(`Ollama request failed with status ${response.status}.`);
   }
 
   const payload = (await response.json()) as {
     message?: { content?: string };
   };
 
-  const parsed = safeJsonParse<Partial<ProjectSpec>>(payload.message?.content ?? '');
-  const sanitized = parsed ? sanitizeProject(parsed) : null;
+  return payload.message?.content ?? null;
+}
 
-  return {
-    project: sanitized ?? undefined,
-    warnings: sanitized ? [] : ['Ollama returned an unreadable project payload.'],
-    provider: 'ollama',
-    model: settings.model,
-    used: Boolean(sanitized)
-  };
+async function requestProviderText(
+  settings: LlmSettings,
+  prompt: string
+): Promise<{ text: string | null; provider: LlmProvider; model?: string; warnings: string[] }> {
+  if (settings.provider === 'none') {
+    return {
+      text: null,
+      provider: 'none',
+      model: settings.model,
+      warnings: []
+    };
+  }
+
+  try {
+    if (settings.provider === 'openai') {
+      const text = await requestOpenAiText(settings, prompt);
+      return {
+        text,
+        provider: 'openai',
+        model: settings.model,
+        warnings: text ? [] : ['OpenAI provider selected, but no API key was available.']
+      };
+    }
+
+    if (settings.provider === 'compatible') {
+      const text = await requestCompatibleText(settings, prompt);
+      return {
+        text,
+        provider: 'compatible',
+        model: settings.model,
+        warnings: text ? [] : ['Compatible API provider requires both base URL and token.']
+      };
+    }
+
+    const text = await requestOllamaText(settings, prompt);
+    return {
+      text,
+      provider: 'ollama',
+      model: settings.model,
+      warnings: []
+    };
+  } catch (error) {
+    return {
+      text: null,
+      provider: settings.provider,
+      model: settings.model,
+      warnings: [error instanceof Error ? error.message : 'LLM request failed.']
+    };
+  }
 }
 
 export function getDefaultLlmSettings(): LlmSettings {
+  const provider = resolveServerProvider();
   return {
-    provider: resolveServerProvider(),
-    model: resolveServerModel(resolveServerProvider()),
-    baseUrl: resolveServerBaseUrl(resolveServerProvider()),
-    apiToken: resolveServerApiToken(resolveServerProvider())
+    provider,
+    model: resolveServerModel(provider),
+    baseUrl: resolveServerBaseUrl(provider),
+    apiToken: resolveServerApiToken(provider)
   };
 }
 
@@ -505,6 +619,44 @@ export function resolveEffectiveLlmSettings(override?: Partial<LlmSettings>): Ll
   };
 }
 
+export async function analyzeActivityWithLlm(input: {
+  settings: LlmSettings;
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+}): Promise<LlmAnalysisResult> {
+  if (input.settings.provider === 'none') {
+    return {
+      warnings: [],
+      provider: 'none',
+      model: input.settings.model,
+      used: false
+    };
+  }
+
+  const prompt =
+    input.settings.provider === 'ollama'
+      ? buildOllamaAnalysisPrompt(input)
+      : buildAnalysisPrompt(input);
+  const response = await requestProviderText(input.settings, prompt);
+  const parsed = safeJsonParse<LlmAnalysisPayload>(response.text ?? '');
+  const sanitized = sanitizeAnalysis(parsed);
+
+  return {
+    clusters: sanitized?.clusters,
+    project: sanitized?.project,
+    warnings:
+      sanitized
+        ? response.warnings
+        : [
+            ...response.warnings,
+            ...(response.text ? ['LLM analysis returned an unreadable project payload.'] : [])
+          ],
+    provider: response.provider,
+    model: response.model,
+    used: Boolean(sanitized)
+  };
+}
+
 export async function refineProjectWithLlm(input: {
   settings: LlmSettings;
   profile: ImportedProfile | null | undefined;
@@ -516,58 +668,30 @@ export async function refineProjectWithLlm(input: {
     return {
       warnings: [],
       provider: 'none',
-      used: false
-    };
-  }
-
-  if (input.settings.provider === 'openai') {
-    const prompt = buildPrompt(input);
-    try {
-      return await callOpenAi(input.settings, prompt);
-    } catch (error) {
-      return {
-        warnings: [
-          error instanceof Error
-            ? `OpenAI refinement failed: ${error.name === 'TimeoutError' ? 'request timed out' : error.message}.`
-            : 'OpenAI refinement failed unexpectedly.'
-        ],
-        provider: 'openai',
-        model: input.settings.model,
-        used: false
-      };
-    }
-  }
-
-  if (input.settings.provider === 'compatible') {
-    const prompt = buildPrompt(input);
-    try {
-      return await callCompatible(input.settings, prompt);
-    } catch (error) {
-      return {
-        warnings: [
-          error instanceof Error
-            ? `Compatible API refinement failed: ${error.name === 'TimeoutError' ? 'request timed out' : error.message}.`
-            : 'Compatible API refinement failed unexpectedly.'
-        ],
-        provider: 'compatible',
-        model: input.settings.model,
-        used: false
-      };
-    }
-  }
-
-  try {
-    return await callOllama(input.settings, buildOllamaPrompt(input));
-  } catch (error) {
-    return {
-      warnings: [
-        error instanceof Error
-          ? `Ollama refinement failed: ${error.name === 'TimeoutError' ? 'request timed out' : error.message}.`
-          : 'Ollama refinement failed unexpectedly.'
-      ],
-      provider: 'ollama',
       model: input.settings.model,
       used: false
     };
   }
+
+  const prompt =
+    input.settings.provider === 'ollama'
+      ? buildOllamaRefinementPrompt(input)
+      : buildRefinementPrompt(input);
+  const response = await requestProviderText(input.settings, prompt);
+  const parsed = safeJsonParse<Partial<ProjectSpec>>(response.text ?? '');
+  const sanitized = parsed ? sanitizeProject(parsed) : null;
+
+  return {
+    project: sanitized ?? undefined,
+    warnings:
+      sanitized
+        ? response.warnings
+        : [
+            ...response.warnings,
+            ...(response.text ? ['LLM refinement returned an unreadable project payload.'] : [])
+          ],
+    provider: response.provider,
+    model: response.model,
+    used: Boolean(sanitized)
+  };
 }
