@@ -31,10 +31,12 @@ async function ensureOllamaModel() {
   const model = (process.env.OLLAMA_BOOTSTRAP_MODEL || process.env.OLLAMA_MODEL || '').trim();
 
   if (provider !== 'ollama' || !model) {
+    console.log('[bootstrap] Skipping Ollama model bootstrap.');
     return;
   }
 
   const baseUrl = normalizeOllamaBaseUrl(process.env.OLLAMA_BASE_URL);
+  console.log(`[bootstrap] Waiting for Ollama at ${baseUrl}.`);
   const reachable = await waitForOllama(baseUrl);
 
   if (!reachable) {
@@ -51,9 +53,11 @@ async function ensureOllamaModel() {
   const alreadyPresent = models.some((entry) => entry && typeof entry === 'object' && entry.name === model);
 
   if (alreadyPresent) {
+    console.log(`[bootstrap] Ollama model already present: ${model}.`);
     return;
   }
 
+  console.log(`[bootstrap] Pulling Ollama model: ${model}.`);
   const pullResponse = await fetch(`${baseUrl}/pull`, {
     method: 'POST',
     headers: {
@@ -68,13 +72,17 @@ async function ensureOllamaModel() {
   if (!pullResponse.ok) {
     throw new Error(`Failed to pull Ollama model ${model} (${pullResponse.status}).`);
   }
+
+  console.log(`[bootstrap] Ollama model ready: ${model}.`);
 }
 
 async function main() {
-  await ensureOllamaModel();
-
   const child = spawn('node', ['build'], {
     stdio: 'inherit'
+  });
+
+  ensureOllamaModel().catch((error) => {
+    console.error('[bootstrap]', error instanceof Error ? error.message : error);
   });
 
   child.on('exit', (code, signal) => {
