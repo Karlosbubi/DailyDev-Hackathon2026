@@ -518,11 +518,13 @@ function buildProjectFramePrompt(input: {
   profile: ImportedProfile | null | undefined;
   activity: ActivityItem[];
   clusters: Cluster[];
+  steeringNote?: string;
 }): string {
   const compact = {
     profile: input.profile,
     activity: summarizeActivity(input.activity).slice(0, 8),
-    clusters: input.clusters
+    clusters: input.clusters,
+    steeringNote: input.steeringNote?.trim() || undefined
   };
 
   return [
@@ -584,6 +586,7 @@ function buildProjectArchitecturePrompt(input: {
   activity: ActivityItem[];
   clusters: Cluster[];
   project: ProjectSpec;
+  steeringNote?: string;
 }): string {
   const compact = {
     profile: input.profile,
@@ -595,7 +598,8 @@ function buildProjectArchitecturePrompt(input: {
       timeline: input.project.timeline,
       summary: input.project.summary,
       stack: input.project.stack
-    }
+    },
+    steeringNote: input.steeringNote?.trim() || undefined
   };
 
   return [
@@ -616,6 +620,7 @@ function buildProjectRoadmapPrompt(input: {
   activity: ActivityItem[];
   clusters: Cluster[];
   project: ProjectSpec;
+  steeringNote?: string;
 }): string {
   const compact = {
     profile: input.profile,
@@ -628,7 +633,8 @@ function buildProjectRoadmapPrompt(input: {
       summary: input.project.summary,
       stack: input.project.stack,
       architecture: input.project.architecture
-    }
+    },
+    steeringNote: input.steeringNote?.trim() || undefined
   };
 
   return [
@@ -647,6 +653,7 @@ function buildVariantNamingPrompt(input: {
   profile: ImportedProfile | null | undefined;
   clusters: Cluster[];
   project: ProjectSpec;
+  steeringNote?: string;
 }): string {
   const compact = {
     profile: input.profile
@@ -663,7 +670,8 @@ function buildVariantNamingPrompt(input: {
       timeline: input.project.timeline,
       summary: input.project.summary,
       stack: input.project.stack.slice(0, 6)
-    }
+    },
+    steeringNote: input.steeringNote?.trim() || undefined
   };
 
   return [
@@ -685,6 +693,7 @@ function buildProjectWriteupPrompt(input: {
   activity: ActivityItem[];
   clusters: Cluster[];
   project: ProjectSpec;
+  steeringNote?: string;
 }): string {
   const compact = {
     profile: input.profile
@@ -697,7 +706,8 @@ function buildProjectWriteupPrompt(input: {
       : null,
     topActivity: summarizeActivity(input.activity).slice(0, 8),
     clusters: input.clusters.slice(0, 4),
-    project: input.project
+    project: input.project,
+    steeringNote: input.steeringNote?.trim() || undefined
   };
 
   return [
@@ -1118,6 +1128,7 @@ export async function draftProjectFrameWithLlm(input: {
   profile: ImportedProfile | null | undefined;
   activity: ActivityItem[];
   clusters: Cluster[];
+  steeringNote?: string;
 }): Promise<LlmStageResult<Partial<ProjectSpec>>> {
   if (input.settings.provider === 'none') {
     return {
@@ -1186,6 +1197,7 @@ export async function draftProjectArchitectureWithLlm(input: {
   activity: ActivityItem[];
   clusters: Cluster[];
   project: ProjectSpec;
+  steeringNote?: string;
 }): Promise<LlmStageResult<Partial<ProjectSpec>>> {
   if (input.settings.provider === 'none') {
     return {
@@ -1220,6 +1232,7 @@ export async function draftProjectRoadmapWithLlm(input: {
   activity: ActivityItem[];
   clusters: Cluster[];
   project: ProjectSpec;
+  steeringNote?: string;
 }): Promise<LlmStageResult<Partial<ProjectSpec>>> {
   if (input.settings.provider === 'none') {
     return {
@@ -1253,6 +1266,7 @@ export async function nameProjectVariantsWithLlm(input: {
   profile: ImportedProfile | null | undefined;
   clusters: Cluster[];
   project: ProjectSpec;
+  steeringNote?: string;
 }): Promise<LlmStageResult<VariantTitleMap>> {
   if (input.settings.provider === 'none') {
     return {
@@ -1283,6 +1297,7 @@ export async function draftProjectWriteupWithLlm(input: {
   activity: ActivityItem[];
   clusters: Cluster[];
   project: ProjectSpec;
+  steeringNote?: string;
 }): Promise<LlmStageResult<string>> {
   if (input.settings.provider === 'none') {
     return {

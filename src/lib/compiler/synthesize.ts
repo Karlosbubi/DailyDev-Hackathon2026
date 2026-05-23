@@ -93,20 +93,54 @@ export function clusterTopics(items: ActivityItem[]): Cluster[] {
     .slice(0, 5);
 }
 
-function buildFallbackProject(clusters: Cluster[], activity: ActivityItem[]): ProjectSpec {
+function normalizeSteeringNote(steeringNote?: string): string {
+  return steeringNote?.trim().replace(/\s+/g, ' ').slice(0, 180) || '';
+}
+
+function applySteeringTitle(baseTitle: string, steeringNote: string): string {
+  const normalized = steeringNote.toLowerCase();
+
+  if (normalized.includes('pokedex')) {
+    return 'Pokedex Workbench';
+  }
+
+  if (normalized.includes('dsa') || normalized.includes('data structures') || normalized.includes('algorithms')) {
+    return 'DSA Practice Workbench';
+  }
+
+  return baseTitle;
+}
+
+function inferProjectTitle(clusters: Cluster[], steering: string): string {
+  const topCluster = clusters[0]?.name ?? 'Signal';
+  const secondCluster = clusters[1]?.name ?? 'Workflow';
+  const seededTitle = `${topCluster} ${secondCluster}`.trim();
+  return applySteeringTitle(`${seededTitle} Workbench`, steering);
+}
+
+function inferProjectStack(activity: ActivityItem[]): string[] {
+  const dominantTags = [...new Set(activity.flatMap((item) => item.tags))].slice(0, 5);
+  return ['TypeScript', dominantTags[0] ?? 'APIs', dominantTags[1] ?? 'Data modeling', dominantTags[2] ?? 'Interface design', 'SvelteKit'];
+}
+
+export function synthesizeProject(clusters: Cluster[], activity: ActivityItem[], steeringNote?: string): ProjectSpec {
   const topCluster = clusters[0]?.name ?? 'Developer Workflow';
   const secondCluster = clusters[1]?.name ?? 'Implementation Systems';
+  const topNames = clusters.slice(0, 3).map((cluster) => cluster.name);
+  const topItems = activity.slice(0, 3).map((item) => item.title);
   const topTags = [...new Set(activity.flatMap((item) => item.tags))].slice(0, 5);
-  const titleSeed = [topCluster, secondCluster].filter(Boolean).slice(0, 2).join(' ');
   const dominantTags = topTags.slice(0, 3).join(', ') || 'operational signals';
   const firstSignal = activity[0]?.title || 'recent technical activity';
-
-  return {
-    title: `${titleSeed || 'Signal'} Workbench`,
+  const steering = normalizeSteeringNote(steeringNote);
+  const steeringSummary = steering
+    ? ` It should explicitly honor the user steer toward ${steering} while staying grounded in the imported activity.`
+    : '';
+  const project: ProjectSpec = {
+    title: inferProjectTitle(clusters, steering),
     difficulty: 'Intermediate',
     timeline: '2 to 3 weekends',
-    summary: `Build a focused ${topCluster.toLowerCase()} workbench for developers who keep running into ${secondCluster.toLowerCase()} decisions during day-to-day work. The first release should ingest ${dominantTags}, turn them into one ranked operating view, and support one concrete workflow from raw signal to action. It should feel closer to a decision-support tool than a content browser, with enough backend shape to make ${firstSignal.toLowerCase()} actionable.`,
-    stack: ['TypeScript', topTags[0] ?? 'APIs', topTags[1] ?? 'Data modeling', topTags[2] ?? 'Interface design', 'SvelteKit'],
+    summary: `Build a focused ${topCluster.toLowerCase()} workbench for developers who keep running into ${secondCluster.toLowerCase()} decisions during day-to-day work. The first release should ingest ${dominantTags}, turn them into one ranked operating view, and support one concrete workflow from raw signal to action. It should feel closer to a decision-support tool than a content browser, with enough backend shape to make ${firstSignal.toLowerCase()} actionable.${steeringSummary}`,
+    stack: inferProjectStack(activity),
     architecture: [
       ['Input Layer', 'Imports articles, bookmarks, and stack signals into one normalized stream.'],
       ['Signal Analysis', 'Ranks repeated topics and extracts dominant build directions from user activity.'],
@@ -124,28 +158,20 @@ function buildFallbackProject(clusters: Cluster[], activity: ActivityItem[]): Pr
       'Turn content consumption into a repeatable build-selection workflow.',
       'Use implementation planning as part of your developer feedback loop.'
     ],
-    rationale: []
+    rationale: [
+      topNames.length > 0
+        ? `Dominant clusters point toward a single tool surface: ${topNames.join(' + ')}.`
+        : 'No dominant clusters were detected; using a general project template.',
+      `Imported activity shows repeated pressure around ${topTags.slice(0, 4).join(', ') || 'n/a'}.`,
+      steering
+        ? `User steering asked to lean toward ${steering}.`
+        : topItems.length > 0
+          ? `Representative signals include ${topItems.join(' | ')}.`
+          : `Input signal count: ${activity.length} imported items.`
+    ]
   };
-}
 
-export function synthesizeProject(clusters: Cluster[], activity: ActivityItem[]): ProjectSpec {
-  const topNames = clusters.slice(0, 3).map((cluster) => cluster.name);
-  const topItems = activity.slice(0, 3).map((item) => item.title);
-  const project = buildFallbackProject(clusters, activity);
-  const rationale = [
-    topNames.length > 0
-      ? `Dominant clusters point toward a single tool surface: ${topNames.join(' + ')}.`
-      : 'No dominant clusters were detected; using a general project template.',
-    `Imported activity shows repeated pressure around ${[...new Set(activity.flatMap((item) => item.tags))].slice(0, 4).join(', ') || 'n/a'}.`,
-    topItems.length > 0
-      ? `Representative signals include ${topItems.join(' | ')}.`
-      : `Input signal count: ${activity.length} imported items.`
-  ];
-
-  return {
-    ...project,
-    rationale
-  };
+  return project;
 }
 
 function uniqueList(items: string[], limit: number): string[] {
@@ -304,11 +330,12 @@ export function buildProjectRecommendations(
 
 export function compileActivity(
   activity: ActivityItem[],
-  importSummary: ImportSummary
+  importSummary: ImportSummary,
+  steeringNote?: string
 ): CompilationResult {
   const workingSet = shuffle(activity).slice(0, 8);
   const clusters = clusterTopics(workingSet);
-  const project = synthesizeProject(clusters, workingSet);
+  const project = synthesizeProject(clusters, workingSet, steeringNote);
   const recommendations = buildProjectRecommendations(project);
 
   return {

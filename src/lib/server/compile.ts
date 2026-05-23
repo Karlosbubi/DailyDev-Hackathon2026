@@ -98,10 +98,11 @@ async function streamWriteup(
 function buildFallbackCompilation(
   activity: Parameters<typeof compileActivity>[0],
   importSummary: ImportSummary,
-  warnings: string[]
+  warnings: string[],
+  steeringNote?: string
 ): CompilationResult {
   const generationWarnings = [...new Set(warnings)];
-  const fallback = compileActivity(activity, importSummary);
+  const fallback = compileActivity(activity, importSummary, steeringNote);
   fallback.projectWriteup = buildProjectWriteup(fallback.project, fallback.clusters);
   fallback.generation = {
     strategy: 'deterministic',
@@ -111,13 +112,16 @@ function buildFallbackCompilation(
   return fallback;
 }
 
-function buildDeterministicDraft(activity: Parameters<typeof compileActivity>[0]): {
+function buildDeterministicDraft(
+  activity: Parameters<typeof compileActivity>[0],
+  steeringNote?: string
+): {
   clusters: Cluster[];
   project: ProjectSpec;
   recommendations: ReturnType<typeof buildProjectRecommendations>;
 } {
   const clusters = clusterTopics(activity);
-  const project = synthesizeProject(clusters, activity);
+  const project = synthesizeProject(clusters, activity, steeringNote);
   const recommendations = buildProjectRecommendations(project);
   return { clusters, project, recommendations };
 }
@@ -127,6 +131,7 @@ async function compileFromActivity(input: {
   importSummary: ImportSummary;
   llmSettings: LlmSettings;
   profile: ImportSummary['profile'];
+  steeringNote?: string;
   emit: (event: ProgressEvent) => void | Promise<void>;
 }): Promise<CompilationResult> {
   await input.emit({
@@ -143,10 +148,10 @@ async function compileFromActivity(input: {
     });
   }
 
-  const deterministicDraft = buildDeterministicDraft(input.activity);
+  const deterministicDraft = buildDeterministicDraft(input.activity, input.steeringNote);
 
   if (input.llmSettings.provider === 'none') {
-    const fallback = buildFallbackCompilation(input.activity, input.importSummary, []);
+    const fallback = buildFallbackCompilation(input.activity, input.importSummary, [], input.steeringNote);
     await streamWriteup(fallback.projectWriteup, input.emit);
     await input.emit({
       type: 'status',
@@ -187,7 +192,8 @@ async function compileFromActivity(input: {
     settings: input.llmSettings,
     profile: input.profile,
     activity: input.activity,
-    clusters: resolvedClusters
+    clusters: resolvedClusters,
+    steeringNote: input.steeringNote
   });
   allWarnings.push(...frameStage.warnings);
 
@@ -217,7 +223,8 @@ async function compileFromActivity(input: {
     profile: input.profile,
     activity: input.activity,
     clusters: resolvedClusters,
-    project: framedProject
+    project: framedProject,
+    steeringNote: input.steeringNote
   });
   allWarnings.push(...architectureStage.warnings);
   const architectedProject =
@@ -246,7 +253,8 @@ async function compileFromActivity(input: {
     profile: input.profile,
     activity: input.activity,
     clusters: resolvedClusters,
-    project: architectedProject
+    project: architectedProject,
+    steeringNote: input.steeringNote
   });
   allWarnings.push(...roadmapStage.warnings);
 
@@ -269,7 +277,8 @@ async function compileFromActivity(input: {
       settings: input.llmSettings,
       profile: input.profile,
       clusters: resolvedClusters,
-      project: finalProject
+      project: finalProject,
+      steeringNote: input.steeringNote
     });
     const recommendations = buildProjectRecommendations(finalProject, variantNamingStage.data);
     await input.emit({
@@ -293,7 +302,8 @@ async function compileFromActivity(input: {
       profile: input.profile,
       activity: input.activity,
       clusters: resolvedClusters,
-      project: finalProject
+      project: finalProject,
+      steeringNote: input.steeringNote
     });
     allWarnings.push(...writeupStage.warnings);
     const projectWriteup = writeupStage.data ?? buildProjectWriteup(finalProject, resolvedClusters);
@@ -343,7 +353,7 @@ async function compileFromActivity(input: {
   const fallback = buildFallbackCompilation(input.activity, input.importSummary, [
     ...allWarnings,
     'Falling back to deterministic analysis because the staged LLM pipeline did not produce a complete project.'
-  ]);
+  ], input.steeringNote);
 
   await input.emit({
     type: 'status',
@@ -359,11 +369,13 @@ export async function compileProjectRequest(input: {
   token?: string;
   forceDemo?: boolean;
   llm?: Partial<LlmSettings>;
+  steeringNote?: string;
   onProgress?: (event: ProgressEvent) => void | Promise<void>;
 }): Promise<CompilationResult> {
-  const { fetchFn, token, forceDemo, llm, onProgress } = input;
+  const { fetchFn, token, forceDemo, llm, steeringNote, onProgress } = input;
   const effectiveToken = token?.trim() || '';
   const tokenSource = token?.trim() ? 'manual' : 'none';
+  const normalizedSteeringNote = steeringNote?.trim() || '';
   if (llm?.provider === 'openai' && !llm.apiToken?.trim()) {
     throw new Error('OpenAI override requires a user-provided API token.');
   }
@@ -391,11 +403,13 @@ export async function compileProjectRequest(input: {
         importedSources: ['demo bookmarks', 'demo history', 'demo stack'],
         importedCount: demoActivity.length,
         warnings: [],
+        steeringNote: normalizedSteeringNote || undefined,
         tokenSource: 'none',
         profile: null
       },
       llmSettings,
       profile: null,
+      steeringNote: normalizedSteeringNote,
       emit
     });
   }
@@ -414,11 +428,13 @@ export async function compileProjectRequest(input: {
         importedSources: ['demo bookmarks', 'demo history', 'demo stack'],
         importedCount: demoActivity.length,
         warnings: ['No API token provided. Running in demo mode.'],
+        steeringNote: normalizedSteeringNote || undefined,
         tokenSource: 'none',
         profile: null
       },
       llmSettings,
       profile: null,
+      steeringNote: normalizedSteeringNote,
       emit
     });
   }
@@ -469,6 +485,7 @@ export async function compileProjectRequest(input: {
       importedSources: imported.importedSources,
       importedCount: imported.activity.length,
       warnings: imported.warnings,
+      steeringNote: normalizedSteeringNote || undefined,
       tokenSource,
       profile: imported.profile
     };
@@ -478,6 +495,7 @@ export async function compileProjectRequest(input: {
       importSummary,
       llmSettings,
       profile: imported.profile,
+      steeringNote: normalizedSteeringNote,
       emit
     });
   } catch (error) {

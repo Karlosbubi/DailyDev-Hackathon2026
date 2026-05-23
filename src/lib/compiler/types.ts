@@ -70,6 +70,7 @@ export interface ImportSummary {
   importedSources: string[];
   importedCount: number;
   warnings: string[];
+  steeringNote?: string;
   tokenSource?: 'manual' | 'none';
   profile?: {
     name: string;

@@ -22,6 +22,7 @@
   type ThemeMode = 'light' | 'dark';
 
   let token = '';
+  let steeringNote = '';
   let compilation: CompilationResult | null = null;
   let isLoading = false;
   let error = '';
@@ -109,6 +110,7 @@
       version: CACHE_VERSION,
       mode,
       token: mode === 'manual' ? token.trim() : '',
+      steeringNote: steeringNote.trim(),
       overrideLlm,
       llm: overrideLlm
         ? {
@@ -224,6 +226,7 @@
         body: JSON.stringify({
           token: mode === 'manual' ? token.trim() : '',
           forceDemo: mode === 'demo',
+          steeringNote: steeringNote.trim(),
           llm: overrideLlm
             ? {
                 provider: llmProvider,
@@ -396,6 +399,11 @@
     localStorage.setItem('dailydev-token', value);
   }
 
+  function persistSteeringNote(value: string) {
+    steeringNote = value;
+    localStorage.setItem('project-steering-note', value);
+  }
+
   onMount(async () => {
     const savedTheme = localStorage.getItem('theme-mode');
     const preferredTheme =
@@ -406,7 +414,11 @@
           : 'light';
     applyTheme(preferredTheme, false);
     token = localStorage.getItem('dailydev-token') ?? '';
-    await compile(token.trim() ? 'manual' : 'demo');
+    steeringNote = localStorage.getItem('project-steering-note') ?? '';
+    streamPhase = 'idle';
+    streamMessage = token.trim()
+      ? 'Saved inputs restored. Start a run when ready.'
+      : 'Add a token or steer the build, then start a run.';
   });
 </script>
 
@@ -469,6 +481,7 @@
           <h2 class="mt-3 text-3xl leading-tight font-semibold text-ink-900">Bring your own profile signal.</h2>
           <p class="mt-3 text-sm leading-7 text-black/62">
             The best results come from your own bookmarks, feed, and stack. Without a token, the app stays in demo mode.
+            No data will be persisted on the server, and the default inference is local ollama - if you bring a new provider it will process your info though.
           </p>
 
           <label class="mt-5 grid gap-2">
@@ -480,6 +493,19 @@
               oninput={(event) => persistToken((event.currentTarget as HTMLInputElement).value)}
               placeholder="Paste a token from daily.dev settings"
             />
+          </label>
+
+          <label class="mt-4 grid gap-2">
+            <span class="font-mono text-[11px] uppercase tracking-[0.16em] text-black/50">Optional build steer</span>
+            <textarea
+              class="min-h-[110px] rounded-2xl border border-moss-500/16 bg-white px-4 py-3 text-sm leading-6 outline-none transition focus:border-moss-500"
+              bind:value={steeringNote}
+              oninput={(event) => persistSteeringNote((event.currentTarget as HTMLTextAreaElement).value)}
+              placeholder="Examples: I want to work on my DSA. I was thinking about a Pokedex app. I want something backend-heavy with queues."
+            ></textarea>
+            <p class="text-sm leading-6 text-black/54">
+              This nudges the recommendation. Imported profile activity still supplies the main signal.
+            </p>
           </label>
 
           <div class="mt-5 flex flex-wrap gap-3">

@@ -2,12 +2,13 @@ import type { LlmSettings, CompilationStreamEvent } from '$lib/compiler/types';
 import { compileProjectRequest } from '$lib/server/compile';
 
 export async function POST({ request, fetch }) {
-  const { token, forceDemo, llm } = (await request
+  const { token, forceDemo, llm, steeringNote } = (await request
     .json()
-    .catch(() => ({ token: '', forceDemo: false, llm: undefined }))) as {
+    .catch(() => ({ token: '', forceDemo: false, llm: undefined, steeringNote: '' }))) as {
     token?: string;
     forceDemo?: boolean;
     llm?: Partial<LlmSettings>;
+    steeringNote?: string;
   };
 
   const encoder = new TextEncoder();
@@ -24,6 +25,7 @@ export async function POST({ request, fetch }) {
           token,
           forceDemo,
           llm,
+          steeringNote,
           onProgress: emit
         });
 
