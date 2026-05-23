@@ -6,19 +6,11 @@ import type {
   LlmProvider,
   LlmServerConfigSummary,
   LlmSettings,
+  RecommendationTier,
   ProjectSpec
 } from '$lib/compiler/types';
 
 interface LlmResult {
-  project?: Partial<ProjectSpec>;
-  warnings: string[];
-  provider: LlmProvider;
-  model?: string;
-  used: boolean;
-}
-
-interface LlmAnalysisResult {
-  clusters?: Cluster[];
   project?: ProjectSpec;
   warnings: string[];
   provider: LlmProvider;
@@ -29,7 +21,19 @@ interface LlmAnalysisResult {
 interface LlmAnalysisPayload {
   clusters?: unknown;
   project?: unknown;
+  recommendation?: unknown;
+  projectRecommendation?: unknown;
 }
+
+interface LlmStageResult<T> {
+  data?: T;
+  warnings: string[];
+  provider: LlmProvider;
+  model?: string;
+  used: boolean;
+}
+
+type VariantTitleMap = Partial<Record<RecommendationTier, string>>;
 
 function readTimeoutMs(value: string | undefined, fallbackMs: number): number {
   const parsed = Number(value?.trim() || '');
@@ -40,6 +44,7 @@ const DEFAULT_LLM_TIMEOUT_MS = readTimeoutMs(env.LLM_TIMEOUT_MS, 60000);
 const OPENAI_TIMEOUT_MS = readTimeoutMs(env.OPENAI_TIMEOUT_MS, 120000);
 const COMPATIBLE_TIMEOUT_MS = readTimeoutMs(env.COMPATIBLE_TIMEOUT_MS, 120000);
 const OLLAMA_TIMEOUT_MS = readTimeoutMs(env.OLLAMA_TIMEOUT_MS, 180000);
+const WRITEUP_TIMEOUT_MS = readTimeoutMs(env.LLM_WRITEUP_TIMEOUT_MS, 300000);
 
 async function fetchWithTimeout(
   input: string,
@@ -85,12 +90,31 @@ function trimPairList(value: unknown): [string, string][] {
   return value
     .map((item) => {
       if (item && typeof item === 'object' && !Array.isArray(item)) {
-        const entries = Object.entries(item as Record<string, unknown>);
-        if (entries.length > 0) {
-          const [key, val] = entries[0];
-          return typeof val === 'string' && key.trim() && val.trim()
-            ? ([key.trim(), val.trim()] as [string, string])
-            : null;
+        const record = item as Record<string, unknown>;
+        const titleCandidate = [
+          record.title,
+          record.name,
+          record.label,
+          record.step,
+          record.heading
+        ].find((entry) => typeof entry === 'string' && entry.trim());
+        const descriptionCandidate = [
+          record.description,
+          record.summary,
+          record.detail,
+          record.details,
+          record.reason,
+          record.value
+        ].find((entry) => typeof entry === 'string' && entry.trim());
+
+        if (typeof titleCandidate === 'string' && typeof descriptionCandidate === 'string') {
+          return [titleCandidate.trim(), descriptionCandidate.trim()] as [string, string];
+        }
+
+        const entries = Object.entries(record).filter(([, val]) => typeof val === 'string' && val.trim());
+        if (entries.length >= 2) {
+          const [first, second] = entries;
+          return [String(first[1]).trim(), String(second[1]).trim()] as [string, string];
         }
       }
 
@@ -113,7 +137,7 @@ function trimPairList(value: unknown): [string, string][] {
     .slice(0, 6);
 }
 
-function sanitizeProject(project: Partial<ProjectSpec>): ProjectSpec | null {
+function normalizeProjectFields(project: Partial<ProjectSpec>): Partial<ProjectSpec> {
   const title = typeof project.title === 'string' ? project.title.trim() : '';
   const difficulty = typeof project.difficulty === 'string' ? project.difficulty.trim() : '';
   const timeline = typeof project.timeline === 'string' ? project.timeline.trim() : '';
@@ -124,49 +148,242 @@ function sanitizeProject(project: Partial<ProjectSpec>): ProjectSpec | null {
   const learningGoals = trimList(project.learningGoals);
   const rationale = trimList(project.rationale);
 
+  return {
+    ...(title ? { title } : {}),
+    ...(difficulty ? { difficulty } : {}),
+    ...(timeline ? { timeline } : {}),
+    ...(summary ? { summary } : {}),
+    ...(stack.length ? { stack } : {}),
+    ...(architecture.length ? { architecture } : {}),
+    ...(milestones.length ? { milestones } : {}),
+    ...(learningGoals.length ? { learningGoals } : {}),
+    ...(rationale.length ? { rationale } : {})
+  };
+}
+
+function sanitizeProject(project: Partial<ProjectSpec>): ProjectSpec | null {
+  const normalized = normalizeProjectFields(project);
+
   if (
-    !title ||
-    !difficulty ||
-    !timeline ||
-    summary.length < 40 ||
-    stack.length < 3 ||
-    architecture.length < 3 ||
-    milestones.length < 3 ||
-    learningGoals.length < 2 ||
-    rationale.length < 2
+    !normalized.title ||
+    !normalized.difficulty ||
+    !normalized.timeline ||
+    !normalized.summary ||
+    normalized.summary.length < 24 ||
+    !normalized.stack ||
+    normalized.stack.length < 3 ||
+    !normalized.architecture ||
+    normalized.architecture.length < 2 ||
+    !normalized.milestones ||
+    normalized.milestones.length < 2 ||
+    !normalized.learningGoals ||
+    normalized.learningGoals.length < 2 ||
+    !normalized.rationale ||
+    normalized.rationale.length < 1
   ) {
     return null;
   }
 
+  return normalized as ProjectSpec;
+}
+
+function mergeProjectWithBaseline(candidate: Partial<ProjectSpec>, baseline: ProjectSpec): ProjectSpec | null {
+  const normalized = normalizeProjectFields(candidate);
+  const merged: ProjectSpec = {
+    title: normalized.title || baseline.title,
+    difficulty: normalized.difficulty || baseline.difficulty,
+    timeline: normalized.timeline || baseline.timeline,
+    summary: normalized.summary || baseline.summary,
+    stack: normalized.stack && normalized.stack.length > 0 ? normalized.stack : baseline.stack,
+    architecture:
+      normalized.architecture && normalized.architecture.length > 0
+        ? normalized.architecture
+        : baseline.architecture,
+    milestones:
+      normalized.milestones && normalized.milestones.length > 0
+        ? normalized.milestones
+        : baseline.milestones,
+    learningGoals:
+      normalized.learningGoals && normalized.learningGoals.length > 0
+        ? normalized.learningGoals
+        : baseline.learningGoals,
+    rationale:
+      normalized.rationale && normalized.rationale.length > 0
+        ? normalized.rationale
+        : baseline.rationale
+  };
+
+  return sanitizeProject(merged);
+}
+
+function sanitizeProjectFrame(project: Partial<ProjectSpec>): Partial<ProjectSpec> | null {
+  const normalized = normalizeProjectFields(project);
+
+  if (!normalized.title && !normalized.summary && !normalized.stack && !normalized.rationale) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function sanitizeProjectPlan(project: Partial<ProjectSpec>): Partial<ProjectSpec> | null {
+  const normalized = normalizeProjectFields(project);
+
+  if (!normalized.architecture && !normalized.milestones && !normalized.learningGoals) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function sanitizeProjectArchitecture(project: Partial<ProjectSpec>): Partial<ProjectSpec> | null {
+  const record = project as Record<string, unknown>;
+  const architectureCandidate =
+    record.architecture ?? record.components ?? record.modules ?? record.systemShape ?? record.services;
+  const normalized = normalizeProjectFields({
+    ...(project as Record<string, unknown>),
+    architecture: architectureCandidate
+  } as Partial<ProjectSpec>);
+
+  if (!normalized.architecture) {
+    return null;
+  }
+
   return {
-    title,
-    difficulty,
-    timeline,
-    summary,
-    stack,
-    architecture,
-    milestones,
-    learningGoals,
-    rationale
+    architecture: normalized.architecture
   };
 }
 
-function sanitizeClusters(value: unknown): Cluster[] {
-  if (!Array.isArray(value)) {
+function sanitizeProjectRoadmap(project: Partial<ProjectSpec>): Partial<ProjectSpec> | null {
+  const normalized = normalizeProjectFields(project);
+
+  if (!normalized.milestones && !normalized.learningGoals) {
+    return null;
+  }
+
+  return {
+    ...(normalized.milestones ? { milestones: normalized.milestones } : {}),
+    ...(normalized.learningGoals ? { learningGoals: normalized.learningGoals } : {})
+  };
+}
+
+function extractProjectCandidate(payload: unknown): Partial<ProjectSpec> | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const record = payload as LlmAnalysisPayload & Partial<ProjectSpec>;
+  return ((record.project ??
+    record.recommendation ??
+  record.projectRecommendation ??
+    record) as Partial<ProjectSpec>) || null;
+}
+
+function normalizeScoreValue(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Number(value.toFixed(2));
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const percentMatch = trimmed.match(/^(\d+(?:\.\d+)?)%$/);
+    if (percentMatch) {
+      const percent = Number(percentMatch[1]);
+      if (Number.isFinite(percent) && percent > 0) {
+        return Number((percent / 100).toFixed(2));
+      }
+    }
+
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return Number((numeric > 1 ? numeric / 100 : numeric).toFixed(2));
+    }
+  }
+
+  return fallback;
+}
+
+function extractClusterArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (!value || typeof value !== 'object') {
     return [];
   }
 
-  return value
-    .map((item) => {
+  const record = value as Record<string, unknown>;
+  const candidates = [
+    record.clusters,
+    record.themes,
+    record.interests,
+    record.topics,
+    record.groups,
+    record.items,
+    record.results,
+    record.data && typeof record.data === 'object' ? (record.data as Record<string, unknown>).clusters : null,
+    record.data && typeof record.data === 'object' ? (record.data as Record<string, unknown>).themes : null
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+function sanitizeClusters(value: unknown): Cluster[] {
+  const items = extractClusterArray(value);
+  if (items.length === 0) {
+    return [];
+  }
+
+  const total = items.length || 1;
+
+  return items
+    .map((item, index) => {
+      const fallbackScore = Number((Math.max(0.35, 1 - index * 0.12)).toFixed(2));
+
+      if (typeof item === 'string') {
+        const name = item.trim();
+        return name
+          ? ({
+              name,
+              score: fallbackScore,
+              relatedTags: []
+            } satisfies Cluster)
+          : null;
+      }
+
       if (!item || typeof item !== 'object') {
         return null;
       }
 
       const record = item as Record<string, unknown>;
-      const name = typeof record.name === 'string' ? record.name.trim() : '';
-      const rawScore = typeof record.score === 'number' ? record.score : Number(record.score ?? 0);
-      const score = Number.isFinite(rawScore) && rawScore > 0 ? Number(rawScore.toFixed(2)) : 0;
-      const relatedTags = trimList(record.relatedTags);
+      const nameCandidate = [
+        record.name,
+        record.title,
+        record.topic,
+        record.cluster,
+        record.label,
+        record.theme
+      ].find((entry) => typeof entry === 'string' && entry.trim());
+      const name = typeof nameCandidate === 'string' ? nameCandidate.trim() : '';
+      const score = normalizeScoreValue(
+        record.score ?? record.confidence ?? record.weight ?? record.relevance ?? record.priority,
+        fallbackScore
+      );
+      const relatedTags = trimList(
+        record.relatedTags ??
+          record.related_tags ??
+          record.tags ??
+          record.keywords ??
+          record.examples ??
+          record.signals ??
+          record.topics
+      );
 
       if (!name || score <= 0) {
         return null;
@@ -180,24 +397,6 @@ function sanitizeClusters(value: unknown): Cluster[] {
     })
     .filter((item): item is Cluster => Boolean(item))
     .slice(0, 5);
-}
-
-function sanitizeAnalysis(payload: LlmAnalysisPayload | null): { clusters?: Cluster[]; project?: ProjectSpec } | null {
-  if (!payload) {
-    return null;
-  }
-
-  const project = sanitizeProject((payload.project ?? {}) as Partial<ProjectSpec>);
-  const clusters = sanitizeClusters(payload.clusters);
-
-  if (!project || clusters.length === 0) {
-    return null;
-  }
-
-  return {
-    clusters,
-    project
-  };
 }
 
 function resolveOpenAiKey(override?: string): string {
@@ -286,40 +485,16 @@ function summarizeActivity(activity: ActivityItem[]): Array<{ title: string; tag
   }));
 }
 
-function buildAnalysisPrompt(input: {
-  profile: ImportedProfile | null | undefined;
-  activity: ActivityItem[];
-}): string {
-  const compact = {
-    profile: input.profile,
-    activity: summarizeActivity(input.activity)
-  };
-
-  return [
-    'Return one JSON object only.',
-    'Analyze the developer profile and activity, then propose a concrete portfolio-worthy software project.',
-    'Use the activity to infer 3 to 5 technical interest clusters and one project that directly fits those interests.',
-    'Do not include markdown or commentary.',
-    'Required top-level keys: clusters, project.',
-    'clusters must be an array of objects with keys: name, score, relatedTags.',
-    'Use numeric positive scores. relatedTags must be an array of strings.',
-    'project must contain keys: title, difficulty, timeline, summary, stack, architecture, milestones, learningGoals, rationale.',
-    'architecture and milestones must be arrays of [title, description] pairs.',
-    'stack, learningGoals, and rationale must be arrays of strings.',
-    'Avoid generic placeholder titles or boilerplate milestone names.',
-    JSON.stringify(compact)
-  ].join('\n');
-}
-
-function buildOllamaAnalysisPrompt(input: {
+function buildClusterPrompt(input: {
   profile: ImportedProfile | null | undefined;
   activity: ActivityItem[];
 }): string {
   const compact = {
     profile: input.profile
       ? {
-          name: input.profile.name,
           username: input.profile.username,
+          bio: input.profile.bio,
+          reputation: input.profile.reputation,
           experienceLevel: input.profile.experienceLevel
         }
       : null,
@@ -327,14 +502,201 @@ function buildOllamaAnalysisPrompt(input: {
   };
 
   return [
-    'Output JSON only.',
-    'Analyze the developer profile and activity.',
-    'Return 3 to 5 interest clusters and one concrete portfolio project.',
-    'Required top-level keys: clusters, project.',
-    'Each cluster must have: name, score, relatedTags.',
-    'The project must have: title, difficulty, timeline, summary, stack, architecture, milestones, learningGoals, rationale.',
-    'For architecture and milestones, return arrays of two-item arrays like [["Name","Description"]].',
-    'Do not use placeholder values like "Name", "Description", "Step", or "Project Recommendation".',
+    'Return one JSON object only.',
+    'Infer 3 to 5 technical interest clusters from the developer activity.',
+    'Required top-level key: clusters.',
+    'Each cluster must be an object with name, score, relatedTags.',
+    'Use short specific names and positive scores between 0 and 1.',
+    'relatedTags must be arrays of strings.',
+    'Example: {"clusters":[{"name":"AI tooling","score":0.91,"relatedTags":["llm","rag","agents"]},{"name":"Observability","score":0.74,"relatedTags":["tracing","metrics","workers"]}]}',
+    'Output valid JSON only.',
+    JSON.stringify(compact)
+  ].join('\n');
+}
+
+function buildProjectFramePrompt(input: {
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+  clusters: Cluster[];
+}): string {
+  const compact = {
+    profile: input.profile,
+    activity: summarizeActivity(input.activity).slice(0, 8),
+    clusters: input.clusters
+  };
+
+  return [
+    'Return one JSON object only.',
+    'Propose one concrete portfolio-worthy software project based on the clusters and activity.',
+    'Required top-level key: project.',
+    'project must contain: title, difficulty, timeline, summary, stack, rationale.',
+    'stack and rationale must be arrays of strings.',
+    'Keep the title specific and the summary implementation-oriented.',
+    'Output valid JSON only.',
+    JSON.stringify(compact)
+  ].join('\n');
+}
+
+function buildProjectPlanPrompt(input: {
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+  clusters: Cluster[];
+  project: ProjectSpec;
+}): string {
+  const compact = {
+    profile: input.profile,
+    topActivity: summarizeActivity(input.activity).slice(0, 6),
+    clusters: input.clusters.slice(0, 4),
+    project: {
+      title: input.project.title,
+      difficulty: input.project.difficulty,
+      timeline: input.project.timeline,
+      summary: input.project.summary,
+      stack: input.project.stack,
+      rationale: input.project.rationale
+    }
+  };
+
+  return [
+    'Return one JSON object only.',
+    'Extend the project with an execution plan.',
+    'Required top-level key: project.',
+    'project must contain: architecture, milestones, learningGoals.',
+    'architecture and milestones may be arrays of [title, description] pairs or arrays of objects with title and description keys.',
+    'learningGoals must be an array of strings.',
+    'Output valid JSON only.',
+    JSON.stringify(compact)
+  ].join('\n');
+}
+
+function buildProjectArchitecturePrompt(input: {
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+  clusters: Cluster[];
+  project: ProjectSpec;
+}): string {
+  const compact = {
+    profile: input.profile,
+    topActivity: summarizeActivity(input.activity).slice(0, 5),
+    clusters: input.clusters.slice(0, 4),
+    project: {
+      title: input.project.title,
+      difficulty: input.project.difficulty,
+      timeline: input.project.timeline,
+      summary: input.project.summary,
+      stack: input.project.stack
+    }
+  };
+
+  return [
+    'Return one JSON object only.',
+    'Extend the project with architecture notes.',
+    'Required top-level key: project.',
+    'project must contain: architecture.',
+    'architecture may be arrays of [title, description] pairs or arrays of objects with title and description keys.',
+    'Example: {"project":{"architecture":[["Ingestion API","Accepts input and validates payloads."],["Worker Pipeline","Processes jobs and updates read models."]]}}',
+    'Keep each component concrete and implementation-oriented.',
+    'Output valid JSON only.',
+    JSON.stringify(compact)
+  ].join('\n');
+}
+
+function buildProjectRoadmapPrompt(input: {
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+  clusters: Cluster[];
+  project: ProjectSpec;
+}): string {
+  const compact = {
+    profile: input.profile,
+    topActivity: summarizeActivity(input.activity).slice(0, 5),
+    clusters: input.clusters.slice(0, 4),
+    project: {
+      title: input.project.title,
+      difficulty: input.project.difficulty,
+      timeline: input.project.timeline,
+      summary: input.project.summary,
+      stack: input.project.stack,
+      architecture: input.project.architecture
+    }
+  };
+
+  return [
+    'Return one JSON object only.',
+    'Extend the project with a roadmap and learning goals.',
+    'Required top-level key: project.',
+    'project must contain: milestones, learningGoals.',
+    'milestones may be arrays of [title, description] pairs or arrays of objects with title and description keys.',
+    'learningGoals must be an array of strings.',
+    'Output valid JSON only.',
+    JSON.stringify(compact)
+  ].join('\n');
+}
+
+function buildVariantNamingPrompt(input: {
+  profile: ImportedProfile | null | undefined;
+  clusters: Cluster[];
+  project: ProjectSpec;
+}): string {
+  const compact = {
+    profile: input.profile
+      ? {
+          username: input.profile.username,
+          bio: input.profile.bio,
+          experienceLevel: input.profile.experienceLevel
+        }
+      : null,
+    clusters: input.clusters.slice(0, 4),
+    project: {
+      title: input.project.title,
+      difficulty: input.project.difficulty,
+      timeline: input.project.timeline,
+      summary: input.project.summary,
+      stack: input.project.stack.slice(0, 6)
+    }
+  };
+
+  return [
+    'Return one JSON object only.',
+    'Name three scoped variants of the same software project.',
+    'Required top-level key: variants.',
+    'variants must be an object with low, medium, and high keys.',
+    'Each value must be a short project title string, not a sentence.',
+    'Keep the names consistent with the same core product, but make them feel like distinct scopes.',
+    'Avoid repeated trailing words like "Platform Platform".',
+    'Example: {"variants":{"low":"AI Ops Starter","medium":"AI Ops Control Plane","high":"AI Ops Deployment Platform"}}',
+    'Output valid JSON only.',
+    JSON.stringify(compact)
+  ].join('\n');
+}
+
+function buildProjectWriteupPrompt(input: {
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+  clusters: Cluster[];
+  project: ProjectSpec;
+}): string {
+  const compact = {
+    profile: input.profile
+      ? {
+          name: input.profile.name,
+          username: input.profile.username,
+          bio: input.profile.bio,
+          experienceLevel: input.profile.experienceLevel
+        }
+      : null,
+    topActivity: summarizeActivity(input.activity).slice(0, 8),
+    clusters: input.clusters.slice(0, 4),
+    project: input.project
+  };
+
+  return [
+    'Write a detailed implementation brief for the proposed software project.',
+    'Return plain text only. Do not return JSON or markdown code fences.',
+    'Use 5 short sections with clear headings in sentence case.',
+    'Cover: project framing, why this fits the developer, implementation sequence, main risks/tradeoffs, and a concrete first build week.',
+    'Be specific and practical. Reference the actual stack, milestones, and clusters.',
+    'Keep the tone direct and technical, around 450 to 700 words.',
     JSON.stringify(compact)
   ].join('\n');
 }
@@ -358,7 +720,7 @@ function buildRefinementPrompt(input: {
     'Keep the output concrete, portfolio-worthy, and technically credible.',
     'Do not include markdown or commentary.',
     'Required keys: title, difficulty, timeline, summary, stack, architecture, milestones, learningGoals, rationale.',
-    'architecture and milestones must be arrays of [title, description] pairs.',
+    'architecture and milestones may be arrays of [title, description] pairs or arrays of objects with title and description keys.',
     'stack, learningGoals, and rationale must be arrays of strings.',
     JSON.stringify(compact)
   ].join('\n');
@@ -396,13 +758,65 @@ function buildOllamaRefinementPrompt(input: {
     'Refine the baseline project to better fit the developer profile and activity.',
     'Keep it concrete, technically credible, and portfolio-worthy.',
     'Required keys: title, difficulty, timeline, summary, stack, architecture, milestones, learningGoals, rationale.',
-    'For architecture and milestones, return arrays of two-item arrays like [["Name","Description"]].',
+    'For architecture and milestones, return either [["Name","Description"]] arrays or [{"title":"Name","description":"Description"}] objects.',
     'Do not use placeholder values like "Name", "Description", "Step", or "Desc".',
     JSON.stringify(compact)
   ].join('\n');
 }
 
-async function requestOpenAiText(settings: LlmSettings, prompt: string): Promise<string | null> {
+function sanitizeVariantTitles(value: unknown): VariantTitleMap {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+
+  const record = value as Record<string, unknown>;
+  const container =
+    (record.variants && typeof record.variants === 'object' ? record.variants : null) ??
+    (record.recommendations && typeof record.recommendations === 'object' ? record.recommendations : null) ??
+    record;
+
+  if (!container || typeof container !== 'object') {
+    return {};
+  }
+
+  const output: VariantTitleMap = {};
+
+  for (const tier of ['low', 'medium', 'high'] as RecommendationTier[]) {
+    const candidate = (container as Record<string, unknown>)[tier];
+    if (typeof candidate === 'string' && candidate.trim()) {
+      output[tier] = candidate.trim().replace(/\s+/g, ' ');
+      continue;
+    }
+
+    if (candidate && typeof candidate === 'object') {
+      const nested = candidate as Record<string, unknown>;
+      const titleCandidate = [nested.title, nested.name, nested.label].find(
+        (entry) => typeof entry === 'string' && entry.trim()
+      );
+      if (typeof titleCandidate === 'string' && titleCandidate.trim()) {
+        output[tier] = titleCandidate.trim().replace(/\s+/g, ' ');
+      }
+    }
+  }
+
+  return output;
+}
+
+function sanitizeWriteupText(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\r\n/g, '\n').trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const cleaned = normalized.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+  return cleaned.length >= 160 ? cleaned : null;
+}
+
+async function requestOpenAiContent(
+  settings: LlmSettings,
+  prompt: string,
+  options: { json: boolean; timeoutMs: number }
+): Promise<string | null> {
   const apiKey = resolveOpenAiKey(settings.apiToken);
   if (!apiKey) {
     return null;
@@ -419,14 +833,18 @@ async function requestOpenAiText(settings: LlmSettings, prompt: string): Promise
       body: JSON.stringify({
         model: settings.model,
         input: prompt,
-        text: {
-          format: {
-            type: 'json_object'
-          }
-        }
+        ...(options.json
+          ? {
+              text: {
+                format: {
+                  type: 'json_object'
+                }
+              }
+            }
+          : {})
       })
     },
-    OPENAI_TIMEOUT_MS
+    options.timeoutMs
   );
 
   if (!response.ok) {
@@ -437,7 +855,11 @@ async function requestOpenAiText(settings: LlmSettings, prompt: string): Promise
   return payload.output_text ?? null;
 }
 
-async function requestCompatibleText(settings: LlmSettings, prompt: string): Promise<string | null> {
+async function requestCompatibleContent(
+  settings: LlmSettings,
+  prompt: string,
+  options: { json: boolean; timeoutMs: number }
+): Promise<string | null> {
   const baseUrl = settings.baseUrl?.trim();
   const token = settings.apiToken?.trim();
 
@@ -458,19 +880,23 @@ async function requestCompatibleText(settings: LlmSettings, prompt: string): Pro
         messages: [
           {
             role: 'system',
-            content: 'Return valid JSON only.'
+            content: options.json ? 'Return valid JSON only.' : 'Return plain text only.'
           },
           {
             role: 'user',
             content: prompt
           }
         ],
-        response_format: {
-          type: 'json_object'
-        }
+        ...(options.json
+          ? {
+              response_format: {
+                type: 'json_object'
+              }
+            }
+          : {})
       })
     },
-    COMPATIBLE_TIMEOUT_MS
+    options.timeoutMs
   );
 
   if (!response.ok) {
@@ -484,7 +910,11 @@ async function requestCompatibleText(settings: LlmSettings, prompt: string): Pro
   return payload.choices?.[0]?.message?.content ?? null;
 }
 
-async function requestOllamaText(settings: LlmSettings, prompt: string): Promise<string | null> {
+async function requestOllamaContent(
+  settings: LlmSettings,
+  prompt: string,
+  options: { json: boolean; timeoutMs: number }
+): Promise<string | null> {
   const baseUrl = normalizeOllamaBaseUrl(settings.baseUrl);
 
   const response = await fetchWithTimeout(
@@ -497,11 +927,11 @@ async function requestOllamaText(settings: LlmSettings, prompt: string): Promise
       body: JSON.stringify({
         model: settings.model,
         stream: false,
-        format: 'json',
+        ...(options.json ? { format: 'json' } : {}),
         messages: [
           {
             role: 'system',
-            content: 'Return valid JSON only.'
+            content: options.json ? 'Return valid JSON only.' : 'Return plain text only.'
           },
           {
             role: 'user',
@@ -510,7 +940,7 @@ async function requestOllamaText(settings: LlmSettings, prompt: string): Promise
         ]
       })
     },
-    OLLAMA_TIMEOUT_MS
+    options.timeoutMs
   );
 
   if (!response.ok) {
@@ -526,8 +956,20 @@ async function requestOllamaText(settings: LlmSettings, prompt: string): Promise
 
 async function requestProviderText(
   settings: LlmSettings,
-  prompt: string
+  prompt: string,
+  options: { json?: boolean; timeoutMs?: number } = {}
 ): Promise<{ text: string | null; provider: LlmProvider; model?: string; warnings: string[] }> {
+  const useJson = options.json ?? true;
+  const timeoutMs =
+    options.timeoutMs ??
+    (settings.provider === 'openai'
+      ? OPENAI_TIMEOUT_MS
+      : settings.provider === 'compatible'
+        ? COMPATIBLE_TIMEOUT_MS
+        : settings.provider === 'ollama'
+          ? OLLAMA_TIMEOUT_MS
+          : DEFAULT_LLM_TIMEOUT_MS);
+
   if (settings.provider === 'none') {
     return {
       text: null,
@@ -539,7 +981,7 @@ async function requestProviderText(
 
   try {
     if (settings.provider === 'openai') {
-      const text = await requestOpenAiText(settings, prompt);
+      const text = await requestOpenAiContent(settings, prompt, { json: useJson, timeoutMs });
       return {
         text,
         provider: 'openai',
@@ -549,7 +991,7 @@ async function requestProviderText(
     }
 
     if (settings.provider === 'compatible') {
-      const text = await requestCompatibleText(settings, prompt);
+      const text = await requestCompatibleContent(settings, prompt, { json: useJson, timeoutMs });
       return {
         text,
         provider: 'compatible',
@@ -558,7 +1000,7 @@ async function requestProviderText(
       };
     }
 
-    const text = await requestOllamaText(settings, prompt);
+    const text = await requestOllamaContent(settings, prompt, { json: useJson, timeoutMs });
     return {
       text,
       provider: 'ollama',
@@ -619,11 +1061,11 @@ export function resolveEffectiveLlmSettings(override?: Partial<LlmSettings>): Ll
   };
 }
 
-export async function analyzeActivityWithLlm(input: {
+export async function inferClustersWithLlm(input: {
   settings: LlmSettings;
   profile: ImportedProfile | null | undefined;
   activity: ActivityItem[];
-}): Promise<LlmAnalysisResult> {
+}): Promise<LlmStageResult<Cluster[]>> {
   if (input.settings.provider === 'none') {
     return {
       warnings: [],
@@ -633,28 +1075,237 @@ export async function analyzeActivityWithLlm(input: {
     };
   }
 
-  const prompt =
-    input.settings.provider === 'ollama'
-      ? buildOllamaAnalysisPrompt(input)
-      : buildAnalysisPrompt(input);
+  const prompt = buildClusterPrompt(input);
   const response = await requestProviderText(input.settings, prompt);
-  const parsed = safeJsonParse<LlmAnalysisPayload>(response.text ?? '');
-  const sanitized = sanitizeAnalysis(parsed);
+  const parsed = safeJsonParse<Record<string, unknown> | unknown[]>(response.text ?? '');
+  const clusters = sanitizeClusters(parsed);
 
   return {
-    clusters: sanitized?.clusters,
-    project: sanitized?.project,
+    data: clusters.length > 0 ? clusters : undefined,
     warnings:
-      sanitized
-        ? response.warnings
-        : [
-            ...response.warnings,
-            ...(response.text ? ['LLM analysis returned an unreadable project payload.'] : [])
-          ],
+      clusters.length > 0
+        ? response.warnings.filter((warning) => !warning.includes('cluster stage returned unreadable output'))
+        : [...response.warnings, ...(response.text ? ['LLM cluster stage returned unreadable output.'] : [])],
     provider: response.provider,
     model: response.model,
-    used: Boolean(sanitized)
+    used: clusters.length > 0
   };
+}
+
+export async function draftProjectFrameWithLlm(input: {
+  settings: LlmSettings;
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+  clusters: Cluster[];
+}): Promise<LlmStageResult<Partial<ProjectSpec>>> {
+  if (input.settings.provider === 'none') {
+    return {
+      warnings: [],
+      provider: 'none',
+      model: input.settings.model,
+      used: false
+    };
+  }
+
+  const prompt = buildProjectFramePrompt(input);
+  const response = await requestProviderText(input.settings, prompt);
+  const parsed = safeJsonParse<Record<string, unknown>>(response.text ?? '');
+  const candidate = extractProjectCandidate(parsed);
+  const project = candidate ? sanitizeProjectFrame(candidate) : null;
+
+  return {
+    data: project ?? undefined,
+    warnings:
+      project
+        ? response.warnings
+        : [...response.warnings, ...(response.text ? ['LLM project stage returned unreadable output.'] : [])],
+    provider: response.provider,
+    model: response.model,
+    used: Boolean(project)
+  };
+}
+
+export async function draftProjectPlanWithLlm(input: {
+  settings: LlmSettings;
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+  clusters: Cluster[];
+  project: ProjectSpec;
+}): Promise<LlmStageResult<Partial<ProjectSpec>>> {
+  if (input.settings.provider === 'none') {
+    return {
+      warnings: [],
+      provider: 'none',
+      model: input.settings.model,
+      used: false
+    };
+  }
+
+  const prompt = buildProjectPlanPrompt(input);
+  const response = await requestProviderText(input.settings, prompt);
+  const parsed = safeJsonParse<Record<string, unknown>>(response.text ?? '');
+  const candidate = extractProjectCandidate(parsed);
+  const project = candidate ? sanitizeProjectPlan(candidate) : null;
+
+  return {
+    data: project ?? undefined,
+    warnings:
+      project
+        ? response.warnings
+        : [...response.warnings, ...(response.text ? ['LLM planning stage returned unreadable output.'] : [])],
+    provider: response.provider,
+    model: response.model,
+    used: Boolean(project)
+  };
+}
+
+export async function draftProjectArchitectureWithLlm(input: {
+  settings: LlmSettings;
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+  clusters: Cluster[];
+  project: ProjectSpec;
+}): Promise<LlmStageResult<Partial<ProjectSpec>>> {
+  if (input.settings.provider === 'none') {
+    return {
+      warnings: [],
+      provider: 'none',
+      model: input.settings.model,
+      used: false
+    };
+  }
+
+  const prompt = buildProjectArchitecturePrompt(input);
+  const response = await requestProviderText(input.settings, prompt);
+  const parsed = safeJsonParse<Record<string, unknown>>(response.text ?? '');
+  const candidate = extractProjectCandidate(parsed);
+  const project = candidate ? sanitizeProjectArchitecture(candidate) : null;
+
+  return {
+    data: project ?? undefined,
+    warnings:
+      project
+        ? response.warnings
+        : [...response.warnings, ...(response.text ? ['LLM architecture stage returned unreadable output.'] : [])],
+    provider: response.provider,
+    model: response.model,
+    used: Boolean(project)
+  };
+}
+
+export async function draftProjectRoadmapWithLlm(input: {
+  settings: LlmSettings;
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+  clusters: Cluster[];
+  project: ProjectSpec;
+}): Promise<LlmStageResult<Partial<ProjectSpec>>> {
+  if (input.settings.provider === 'none') {
+    return {
+      warnings: [],
+      provider: 'none',
+      model: input.settings.model,
+      used: false
+    };
+  }
+
+  const prompt = buildProjectRoadmapPrompt(input);
+  const response = await requestProviderText(input.settings, prompt);
+  const parsed = safeJsonParse<Record<string, unknown>>(response.text ?? '');
+  const candidate = extractProjectCandidate(parsed);
+  const project = candidate ? sanitizeProjectRoadmap(candidate) : null;
+
+  return {
+    data: project ?? undefined,
+    warnings:
+      project
+        ? response.warnings
+        : [...response.warnings, ...(response.text ? ['LLM roadmap stage returned unreadable output.'] : [])],
+    provider: response.provider,
+    model: response.model,
+    used: Boolean(project)
+  };
+}
+
+export async function nameProjectVariantsWithLlm(input: {
+  settings: LlmSettings;
+  profile: ImportedProfile | null | undefined;
+  clusters: Cluster[];
+  project: ProjectSpec;
+}): Promise<LlmStageResult<VariantTitleMap>> {
+  if (input.settings.provider === 'none') {
+    return {
+      warnings: [],
+      provider: 'none',
+      model: input.settings.model,
+      used: false
+    };
+  }
+
+  const prompt = buildVariantNamingPrompt(input);
+  const response = await requestProviderText(input.settings, prompt);
+  const parsed = safeJsonParse<Record<string, unknown>>(response.text ?? '');
+  const variants = sanitizeVariantTitles(parsed);
+
+  return {
+    data: Object.keys(variants).length > 0 ? variants : undefined,
+    warnings: variants.low || variants.medium || variants.high ? response.warnings : [],
+    provider: response.provider,
+    model: response.model,
+    used: Boolean(variants.low || variants.medium || variants.high)
+  };
+}
+
+export async function draftProjectWriteupWithLlm(input: {
+  settings: LlmSettings;
+  profile: ImportedProfile | null | undefined;
+  activity: ActivityItem[];
+  clusters: Cluster[];
+  project: ProjectSpec;
+}): Promise<LlmStageResult<string>> {
+  if (input.settings.provider === 'none') {
+    return {
+      warnings: [],
+      provider: 'none',
+      model: input.settings.model,
+      used: false
+    };
+  }
+
+  const prompt = buildProjectWriteupPrompt(input);
+  const response = await requestProviderText(input.settings, prompt, {
+    json: false,
+    timeoutMs: WRITEUP_TIMEOUT_MS
+  });
+  const writeup = sanitizeWriteupText(response.text);
+
+  return {
+    data: writeup ?? undefined,
+    warnings:
+      writeup
+        ? response.warnings
+        : [...response.warnings, ...(response.text ? ['LLM writeup stage returned unreadable output.'] : [])],
+    provider: response.provider,
+    model: response.model,
+    used: Boolean(writeup)
+  };
+}
+
+export function mergeProjectDrafts(baseline: ProjectSpec, ...partials: Array<Partial<ProjectSpec> | undefined>): ProjectSpec | null {
+  let current: ProjectSpec = baseline;
+
+  for (const partial of partials) {
+    if (!partial) {
+      continue;
+    }
+
+    const merged = mergeProjectWithBaseline(partial, current);
+    if (merged) {
+      current = merged;
+    }
+  }
+
+  return sanitizeProject(current);
 }
 
 export async function refineProjectWithLlm(input: {
@@ -678,8 +1329,10 @@ export async function refineProjectWithLlm(input: {
       ? buildOllamaRefinementPrompt(input)
       : buildRefinementPrompt(input);
   const response = await requestProviderText(input.settings, prompt);
-  const parsed = safeJsonParse<Partial<ProjectSpec>>(response.text ?? '');
-  const sanitized = parsed ? sanitizeProject(parsed) : null;
+  const parsed = safeJsonParse<Partial<ProjectSpec> & { project?: Partial<ProjectSpec> }>(response.text ?? '');
+  const sanitized = parsed
+    ? mergeProjectWithBaseline((parsed.project ?? parsed) as Partial<ProjectSpec>, input.project)
+    : null;
 
   return {
     project: sanitized ?? undefined,

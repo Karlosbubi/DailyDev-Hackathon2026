@@ -34,6 +34,13 @@ export interface ProjectSpec {
   rationale: string[];
 }
 
+export type RecommendationTier = 'low' | 'medium' | 'high';
+
+export interface ProjectRecommendation extends ProjectSpec {
+  tier: RecommendationTier;
+  effortLabel: string;
+}
+
 export type LlmProvider = 'none' | 'openai' | 'ollama' | 'compatible';
 
 export interface LlmSettings {
@@ -63,7 +70,7 @@ export interface ImportSummary {
   importedSources: string[];
   importedCount: number;
   warnings: string[];
-  tokenSource?: 'manual' | 'server' | 'none';
+  tokenSource?: 'manual' | 'none';
   profile?: {
     name: string;
     username?: string;
@@ -77,11 +84,14 @@ export interface CompilationResult {
   activity: ActivityItem[];
   clusters: Cluster[];
   project: ProjectSpec;
+  recommendations: ProjectRecommendation[];
+  projectWriteup: string;
   importSummary: ImportSummary;
   generation: GenerationSummary;
 }
 
 export interface ImportedProfile {
+  id?: string;
   name: string;
   username?: string;
   bio?: string;
@@ -89,7 +99,7 @@ export interface ImportedProfile {
   experienceLevel?: string;
 }
 
-export type ImportSourceName = 'profile' | 'bookmarks' | 'feed' | 'stack';
+export type ImportSourceName = 'profile' | 'bookmarks' | 'feed' | 'stack' | 'discussion' | 'experiences';
 
 export interface CompilationStatusEvent {
   type: 'status';
@@ -108,9 +118,29 @@ export interface CompilationSourceEvent {
   profile: ImportedProfile | null;
 }
 
+export type AnalysisStageName = 'clusters' | 'project' | 'architecture' | 'roadmap' | 'variants' | 'writeup';
+
+export interface CompilationAnalysisEvent {
+  type: 'analysis';
+  stage: AnalysisStageName;
+  status: 'success' | 'partial' | 'error';
+  message: string;
+  clusters?: Cluster[];
+  project?: Partial<ProjectSpec>;
+  recommendations?: ProjectRecommendation[];
+  warnings: string[];
+}
+
 export interface CompilationResultEvent {
   type: 'result';
   result: CompilationResult;
+}
+
+export interface CompilationWriteupEvent {
+  type: 'writeup';
+  chunk: string;
+  content: string;
+  done: boolean;
 }
 
 export interface CompilationErrorEvent {
@@ -120,6 +150,8 @@ export interface CompilationErrorEvent {
 
 export type CompilationStreamEvent =
   | CompilationStatusEvent
+  | CompilationAnalysisEvent
   | CompilationSourceEvent
+  | CompilationWriteupEvent
   | CompilationResultEvent
   | CompilationErrorEvent;

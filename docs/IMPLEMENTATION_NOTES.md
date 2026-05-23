@@ -14,14 +14,12 @@ The app compiles daily.dev activity into a project recommendation flow:
 
 ## Why the token flow works this way
 
-We support two live-token sources on purpose:
+The app now supports one live-token source on purpose:
 
 - pasted user token:
-  lets any user fetch their own daily.dev profile and activity without changing server configuration
-- server env token:
-  keeps the demo usable for local development and presentations when a shared token is acceptable
+  lets any user fetch their own daily.dev profile and activity without relying on shared server credentials
 
-The pasted token is explicit and user-controlled. The server token is a convenience fallback, not a replacement.
+This keeps account access explicit and user-controlled. If no token is provided, the app stays in demo mode.
 
 ## Why import progress now streams
 
@@ -85,9 +83,10 @@ Behavior:
 
 - if the UI sends no override, the request uses server LLM settings
 - if the UI explicitly enables override mode, request-level settings replace the server defaults for that request only
+- if the user selects OpenAI in override mode, they must provide their own API token for that request
 - if the provider call fails or times out, the app returns deterministic output with generation warnings
 
-This keeps deploy-time behavior stable while preserving a testing escape hatch.
+This keeps deploy-time behavior stable while still allowing per-request model routing when a user wants a faster, stronger, or personally funded provider.
 
 ## Provider timeouts
 

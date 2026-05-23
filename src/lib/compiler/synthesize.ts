@@ -1,147 +1,12 @@
 import { demoActivity } from '$lib/compiler/demo';
-import type { ActivityItem, Cluster, CompilationResult, ImportSummary, ProjectSpec } from '$lib/compiler/types';
-
-const topicFamilies: Record<string, string[]> = {
-  'distributed systems': [
-    'kafka',
-    'microservices',
-    'distributed systems',
-    'cqrs',
-    'reliability',
-    'event-driven',
-    'streaming',
-    'serverless',
-    'kubernetes'
-  ],
-  'backend systems': [
-    'typescript',
-    'backend',
-    'workers',
-    'queues',
-    'postgresql',
-    'postgres',
-    'system design',
-    'node.js',
-    'rust',
-    '.net',
-    'elixir',
-    'erlang',
-    'linux',
-    'performance'
-  ],
-  observability: ['opentelemetry', 'tracing', 'metrics', 'monitoring', 'analytics', 'logging', 'mlops'],
-  'developer tooling': [
-    'sveltekit',
-    'next.js',
-    'dashboards',
-    'dx',
-    'architecture',
-    'cloud',
-    'devops',
-    'frontend',
-    'testing',
-    'code-review',
-    'technical-debt',
-    'productivity',
-    'dependency-injection'
-  ],
-  ai: [
-    'llm',
-    'ai',
-    'agents',
-    'prompting',
-    'embeddings',
-    'rag',
-    'vector',
-    'machine-learning',
-    'ai-agents',
-    'ai-inference',
-    'gpu',
-    'python',
-    'jupyter'
-  ],
-  frontend: ['frontend', 'ui', 'ux', 'component', 'design system', 'realtime']
-};
-
-const projectBlueprints: Array<Omit<ProjectSpec, 'rationale'>> = [
-  {
-    title: 'SignalForge Event Journal',
-    difficulty: 'Advanced',
-    timeline: '3 to 4 weekends',
-    summary:
-      'Build a developer-facing event journal that ingests product events, stores them in an append-only log, replays state projections, and exposes an operational dashboard for failures, lag, and traceability.',
-    stack: ['TypeScript', 'SvelteKit', 'Node.js', 'PostgreSQL', 'Kafka-compatible queue', 'OpenTelemetry'],
-    architecture: [
-      ['Ingestion API', 'Accepts events from services, validates schemas, and writes to the durable log.'],
-      ['Projection Workers', 'Consumes events asynchronously, materializes read models, and handles retries.'],
-      ['Ops Dashboard', 'Shows replay controls, lag metrics, failure traces, and throughput trends.'],
-      ['Trace Pipeline', 'Connects API requests, queue jobs, and projection runs with telemetry spans.']
-    ],
-    milestones: [
-      ['Define the event contract', 'Model event envelopes, schema versioning rules, and an append-only persistence strategy.'],
-      ['Implement replayable projections', 'Build workers that reconstruct read models from the log and recover from partial failure.'],
-      ['Add operational controls', 'Ship dead-letter handling, retry inspection, and replay commands for a single stream.'],
-      ['Instrument the system', 'Publish traces and service metrics so a developer can debug end-to-end event flow quickly.'],
-      ['Polish the dashboard', 'Expose stream health, projection lag, and runbooks in a clean operator view.']
-    ],
-    learningGoals: [
-      'Design event-first data models without coupling write and read paths.',
-      'Reason about queues, retries, idempotency, and delivery guarantees.',
-      'Use telemetry as part of the architecture instead of afterthought monitoring.',
-      'Translate system-design reading into a portfolio project with credible complexity.'
-    ]
-  },
-  {
-    title: 'TraceDeck Dev Observatory',
-    difficulty: 'Intermediate',
-    timeline: '2 to 3 weekends',
-    summary:
-      'Create a local-first observability console for side projects that turns logs, spans, and custom metrics into a single developer cockpit with guided debugging flows.',
-    stack: ['SvelteKit', 'TypeScript', 'SQLite', 'OpenTelemetry', 'Tailwind CSS'],
-    architecture: [
-      ['Collector', 'Accepts local spans and metrics with a simple ingestion endpoint.'],
-      ['Storage Layer', 'Persists recent traces and aggregates metric windows for lightweight querying.'],
-      ['Insight Engine', 'Flags hot paths, repeated failures, and suspicious latency spikes.'],
-      ['Visualization UI', 'Renders timeline charts, trace trees, and issue summaries.']
-    ],
-    milestones: [
-      ['Wire up ingestion', 'Capture spans and metrics from a demo service.'],
-      ['Store and query telemetry', 'Build basic trace lookup and metric aggregation.'],
-      ['Generate insights', 'Highlight errors and regressions from recent activity.'],
-      ['Design the cockpit', 'Package the data into a dashboard a solo developer will actually use.']
-    ],
-    learningGoals: [
-      'Understand practical telemetry data flows.',
-      'Turn infrastructure concerns into productized internal tooling.',
-      'Build richer frontend visualizations around technical datasets.'
-    ]
-  },
-  {
-    title: 'PromptRail Research Workbench',
-    difficulty: 'Intermediate',
-    timeline: '2 to 4 weekends',
-    summary:
-      'Create a developer research workbench that collects technical sources, clusters them into themes, and turns them into prompt-ready implementation briefs with comparison views and build checklists.',
-    stack: ['SvelteKit', 'TypeScript', 'SQLite', 'Embeddings API', 'Tailwind CSS'],
-    architecture: [
-      ['Source Importer', 'Collects saved posts and normalizes technical topics into a searchable corpus.'],
-      ['Clustering Engine', 'Groups related content and scores themes by recency and frequency.'],
-      ['Brief Generator', 'Produces implementation-ready briefs, constraints, and extension paths.'],
-      ['Workspace UI', 'Lets the developer review clusters, briefs, and build-next recommendations.']
-    ],
-    milestones: [
-      ['Import the corpus', 'Normalize saved content into reusable research snapshots.'],
-      ['Score clusters', 'Identify high-signal themes across tags, sources, and engagement.'],
-      ['Generate briefs', 'Produce repeatable implementation plans from clustered topics.'],
-      ['Refine the workflow', 'Package the process into a tool that feels faster than note-taking.']
-    ],
-    learningGoals: [
-      'Translate AI-assisted research into deterministic product behavior.',
-      'Model topic extraction and clustering without overfitting to one content source.',
-      'Turn reading behavior into reusable developer workflow tooling.'
-    ]
-  }
-];
+import type {
+  ActivityItem,
+  Cluster,
+  CompilationResult,
+  ImportSummary,
+  ProjectRecommendation,
+  ProjectSpec
+} from '$lib/compiler/types';
 
 function shuffle<T>(items: T[]): T[] {
   return [...items].sort(() => Math.random() - 0.5);
@@ -177,78 +42,79 @@ function extractSignals(item: ActivityItem): string[] {
   return [...item.tags.map(normalizeTag), ...titleTokens];
 }
 
-function keywordMatchesSignal(keyword: string, signal: string): boolean {
-  if (signal === keyword) {
-    return true;
+function humanizeSignal(signal: string): string {
+  return signal
+    .split(/[\s.+-]+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function buildDynamicClusterCandidates(item: ActivityItem): string[] {
+  const normalizedTags = item.tags.map(normalizeTag).filter((tag) => tag.length >= 2);
+  const signalSet = new Set<string>(normalizedTags);
+  const titleSignals = extractSignals(item).filter((signal) => signal.length >= 4);
+
+  for (const signal of titleSignals.slice(0, 4)) {
+    signalSet.add(signal);
   }
 
-  const signalParts = signal.split(/[^a-z0-9]+/).filter(Boolean);
-  if (signalParts.includes(keyword)) {
-    return true;
-  }
-
-  if (keyword.length >= 4 && signal.includes(keyword)) {
-    return true;
-  }
-
-  return false;
+  return [...signalSet];
 }
 
 export function clusterTopics(items: ActivityItem[]): Cluster[] {
-  const scores = Object.fromEntries(Object.keys(topicFamilies).map((family) => [family, 0]));
+  const scores = new Map<string, number>();
   const matchedTags = new Map<string, Set<string>>();
 
-  for (const family of Object.keys(topicFamilies)) {
-    matchedTags.set(family, new Set<string>());
-  }
-
   for (const item of items) {
-    const signals = extractSignals(item);
+    const clusterCandidates = buildDynamicClusterCandidates(item);
+    const relatedSignals = extractSignals(item).filter((signal) => signal.length >= 3);
 
-    for (const [family, keywords] of Object.entries(topicFamilies)) {
-      const itemMatches = signals.filter((signal) =>
-        keywords.some((keyword) => keywordMatchesSignal(keyword, signal))
-      );
-      if (itemMatches.length > 0) {
-        scores[family] += item.weight * itemMatches.length;
-        for (const tag of itemMatches) {
-          matchedTags.get(family)?.add(tag);
+    for (const candidate of clusterCandidates) {
+      scores.set(candidate, (scores.get(candidate) ?? 0) + item.weight);
+      const existing = matchedTags.get(candidate) ?? new Set<string>();
+      for (const signal of relatedSignals) {
+        if (signal !== candidate) {
+          existing.add(signal);
         }
       }
+      matchedTags.set(candidate, existing);
     }
   }
 
-  return Object.entries(scores)
+  return [...scores.entries()]
     .map(([name, score]) => ({
-      name,
+      name: humanizeSignal(name),
       score: Number(score.toFixed(2)),
       relatedTags: [...(matchedTags.get(name) ?? [])].slice(0, 4)
     }))
     .filter((cluster) => cluster.score > 0)
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
 }
 
 function buildFallbackProject(clusters: Cluster[], activity: ActivityItem[]): ProjectSpec {
-  const topCluster = clusters[0]?.name ?? 'developer tooling';
+  const topCluster = clusters[0]?.name ?? 'Developer Workflow';
+  const secondCluster = clusters[1]?.name ?? 'Implementation Systems';
   const topTags = [...new Set(activity.flatMap((item) => item.tags))].slice(0, 5);
+  const titleSeed = [topCluster, secondCluster].filter(Boolean).slice(0, 2).join(' ');
 
   return {
-    title: 'CompilerLab Build Sprint',
+    title: `${titleSeed || 'Signal'} Workbench`,
     difficulty: 'Intermediate',
     timeline: '2 to 3 weekends',
-    summary:
-      'Build a portfolio project that packages your strongest current interests into a single implementation sprint, with an emphasis on developer workflow and fast learning loops.',
-    stack: ['SvelteKit', 'TypeScript', 'SQLite', topTags[0] ?? 'REST APIs', topTags[1] ?? 'Tailwind CSS'],
+    summary: `Build a portfolio project that packages your strongest current interests around ${topCluster} into a single implementation sprint, with an emphasis on fast feedback loops and a credible technical core.`,
+    stack: ['TypeScript', topTags[0] ?? 'APIs', topTags[1] ?? 'Data modeling', topTags[2] ?? 'Interface design', 'SvelteKit'],
     architecture: [
       ['Input Layer', 'Imports articles, bookmarks, and stack signals into one normalized stream.'],
-      ['Inference Layer', 'Scores clusters from repeated topics and recent engagement patterns.'],
-      ['Planning Layer', 'Turns dominant themes into milestones, architecture notes, and next steps.'],
-      ['Execution UI', 'Shows what to build next and why it matches the developer profile.']
+      ['Signal Analysis', 'Ranks repeated topics and extracts dominant build directions from user activity.'],
+      ['Project Engine', 'Turns open-ended themes into a scoped concept, stack, and execution model.'],
+      ['Execution Surface', 'Shows what to build next and why it matches the developer profile.']
     ],
     milestones: [
       ['Import signals', 'Aggregate technical activity into one developer profile snapshot.'],
-      ['Rank interest clusters', 'Identify repeated themes and prioritize the strongest direction.'],
-      ['Generate the plan', 'Produce milestones, stack recommendations, and architecture notes.'],
+      ['Rank live topics', 'Identify repeated themes without constraining them to a fixed taxonomy.'],
+      ['Generate the plan', 'Produce milestones, stack recommendations, and architecture notes from the discovered signals.'],
       ['Tighten the loop', 'Refine outputs until the suggested project feels concrete enough to start.']
     ],
     learningGoals: [
@@ -261,18 +127,8 @@ function buildFallbackProject(clusters: Cluster[], activity: ActivityItem[]): Pr
 }
 
 export function synthesizeProject(clusters: Cluster[], activity: ActivityItem[]): ProjectSpec {
-  const topNames = clusters.slice(0, 2).map((cluster) => cluster.name);
-  let selected: Omit<ProjectSpec, 'rationale'> | undefined;
-
-  if (topNames.includes('distributed systems') && topNames.includes('backend systems')) {
-    selected = projectBlueprints[0];
-  } else if (topNames.includes('observability') && topNames.includes('developer tooling')) {
-    selected = projectBlueprints[1];
-  } else if (topNames.includes('ai') || topNames.includes('developer tooling')) {
-    selected = projectBlueprints[2];
-  }
-
-  const project = selected ?? buildFallbackProject(clusters, activity);
+  const topNames = clusters.slice(0, 3).map((cluster) => cluster.name);
+  const project = buildFallbackProject(clusters, activity);
   const rationale = [
     topNames.length > 0
       ? `Dominant clusters: ${topNames.join(' + ')}.`
@@ -287,6 +143,160 @@ export function synthesizeProject(clusters: Cluster[], activity: ActivityItem[])
   };
 }
 
+function uniqueList(items: string[], limit: number): string[] {
+  return [...new Set(items.map((item) => item.trim()).filter(Boolean))].slice(0, limit);
+}
+
+function composeProjectWriteup(project: ProjectSpec, clusters: Cluster[]): string {
+  const dominantClusters = clusters.slice(0, 3).map((cluster) => cluster.name).join(', ') || 'developer tooling';
+  const stackLine = project.stack.join(', ');
+  const firstMilestone = project.milestones[0];
+  const secondMilestone = project.milestones[1];
+
+  return [
+    'Project framing',
+    `${project.title} should be treated as a concrete build with visible system boundaries, not just a theme. The dominant clusters around ${dominantClusters} suggest a project that can show architectural judgment, implementation discipline, and a credible product loop using ${stackLine}.`,
+    '',
+    'Why this fits',
+    `This direction fits because it converts repeated reading signals into a portfolio artifact with clear decisions to make. The project summary and rationale already point toward practical delivery pressure rather than open-ended research, which is where the strongest learning usually happens.`,
+    '',
+    'Implementation sequence',
+    `${firstMilestone ? `${firstMilestone[0]} should define the first vertical slice: ${firstMilestone[1]}` : 'Start by proving the narrowest useful vertical slice.'} ${secondMilestone ? `${secondMilestone[0]} comes next: ${secondMilestone[1]}` : 'Then expand into the next major workflow boundary.'} Once those steps are stable, the remaining milestones should harden reliability, observability, and operator clarity instead of adding a second concept halfway through the build.`,
+    '',
+    'Risks and tradeoffs',
+    'The main risk is scope drift. Projects in this category become vague when they try to solve every adjacent workflow at once. Keep the first release centered on one believable user path, and let the rest of the system prove its value through instrumentation, operations, and quality of execution.',
+    '',
+    'First build week',
+    `During the first week, establish the repo shape, define the core data model, wire the first storage or messaging edge, and make one milestone executable end to end. The goal is to make the project real quickly enough that the architecture and roadmap can be refined against implementation pressure instead of guesswork.`
+  ].join('\n');
+}
+
+function dedupeAdjacentWords(title: string): string {
+  const words = title
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  return words.filter((word, index) => word.toLowerCase() !== words[index - 1]?.toLowerCase()).join(' ');
+}
+
+function renameTitleByTier(baseTitle: string, tier: ProjectRecommendation['tier']): string {
+  const cleanTitle = dedupeAdjacentWords(baseTitle);
+
+  if (tier === 'medium') {
+    return cleanTitle;
+  }
+
+  if (tier === 'low') {
+    if (/\bplatform$/i.test(cleanTitle)) {
+      return cleanTitle.replace(/\bplatform$/i, 'Starter');
+    }
+
+    if (/\b(workbench|studio|console|system)$/i.test(cleanTitle)) {
+      return `${cleanTitle} Starter`;
+    }
+
+    return `${cleanTitle} Starter`;
+  }
+
+  if (/\bstarter$/i.test(cleanTitle)) {
+    return cleanTitle.replace(/\bstarter$/i, 'Platform');
+  }
+
+  if (/\b(platform|suite|studio|system)$/i.test(cleanTitle)) {
+    return cleanTitle;
+  }
+
+  return `${cleanTitle} Platform`;
+}
+
+function scaleProject(
+  base: ProjectSpec,
+  tier: ProjectRecommendation['tier'],
+  titleOverride?: string
+): ProjectRecommendation {
+  const tierTitle = titleOverride?.trim() || renameTitleByTier(base.title, tier);
+
+  if (tier === 'low') {
+    return {
+      tier,
+      effortLabel: 'Low effort',
+      title: tierTitle,
+      difficulty: 'Beginner to Intermediate',
+      timeline: '1 to 2 weekends',
+      summary: `Build a scoped starter version of ${base.title} that proves the core workflow quickly without the heavier platform concerns.`,
+      stack: uniqueList(base.stack.slice(0, 4), 4),
+      architecture: base.architecture.slice(0, 3),
+      milestones: base.milestones.slice(0, 3),
+      learningGoals: uniqueList(base.learningGoals.slice(0, 3), 3),
+      rationale: [
+        'Optimized for shipping a credible first version quickly.',
+        ...base.rationale.slice(0, 2)
+      ]
+    };
+  }
+
+  if (tier === 'high') {
+    return {
+      tier,
+      effortLabel: 'High effort',
+      title: tierTitle,
+      difficulty: 'Advanced',
+      timeline: '4 to 6 weekends',
+      summary: `Expand ${base.title} into a more ambitious platform with stronger reliability, observability, and extensibility constraints.`,
+      stack: uniqueList([...base.stack, 'Queueing', 'Observability', 'Deployment Automation'], 8),
+      architecture: uniqueList(
+        [...base.architecture.map(([title, description]) => `${title}:::${description}`),
+          'Reliability Layer:::Adds retries, operational safeguards, and failure recovery paths.',
+          'Delivery Layer:::Packages deployment, configuration, and environment promotion for repeatable release flow.'
+        ],
+        6
+      ).map((item) => {
+        const [title, description] = item.split(':::');
+        return [title, description] as [string, string];
+      }),
+      milestones: uniqueList(
+        [...base.milestones.map(([title, description]) => `${title}:::${description}`),
+          'Harden the platform:::Add reliability, failure recovery, and better operational visibility.',
+          'Ship a production-style release:::Document rollout, instrumentation, and scaling constraints.'
+        ],
+        6
+      ).map((item) => {
+        const [title, description] = item.split(':::');
+        return [title, description] as [string, string];
+      }),
+      learningGoals: uniqueList(
+        [...base.learningGoals, 'Practice scoping a richer system without losing implementation clarity.'],
+        5
+      ),
+      rationale: [
+        'Designed as the most ambitious version of the same core direction.',
+        ...base.rationale.slice(0, 2)
+      ]
+    };
+  }
+
+  return {
+    ...base,
+    tier,
+    title: tierTitle,
+    effortLabel: 'Medium effort'
+  };
+}
+
+export function buildProjectRecommendations(
+  base: ProjectSpec,
+  titleOverrides?: Partial<Record<ProjectRecommendation['tier'], string>>
+): ProjectRecommendation[] {
+  return ['low', 'medium', 'high'].map((tier) =>
+    scaleProject(
+      base,
+      tier as ProjectRecommendation['tier'],
+      titleOverrides?.[tier as ProjectRecommendation['tier']]
+    )
+  );
+}
+
 export function compileActivity(
   activity: ActivityItem[],
   importSummary: ImportSummary
@@ -294,11 +304,14 @@ export function compileActivity(
   const workingSet = shuffle(activity).slice(0, 8);
   const clusters = clusterTopics(workingSet);
   const project = synthesizeProject(clusters, workingSet);
+  const recommendations = buildProjectRecommendations(project);
 
   return {
     activity: workingSet,
     clusters,
     project,
+    recommendations,
+    projectWriteup: composeProjectWriteup(project, clusters),
     importSummary,
     generation: {
       strategy: 'deterministic',
