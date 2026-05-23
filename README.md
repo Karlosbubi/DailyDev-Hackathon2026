@@ -17,6 +17,18 @@ npm install
 npm run dev
 ```
 
+## Container deployment
+
+```bash
+docker compose up --build
+```
+
+- The app is exposed on `http://localhost:3000`.
+- Ollama is exposed on `http://localhost:11434`.
+- The compose stack pulls `llama3.1:8b` by default on first startup. Override with `OLLAMA_MODEL=...`.
+- The app is configured to talk to Ollama over the internal compose network with `OLLAMA_BASE_URL=http://ollama:11434/api`.
+- No app data is persisted on the server. Only the Ollama model cache is stored in the `ollama-data` volume.
+
 ## Current scope
 
 - live daily.dev token-based import path with demo fallback
@@ -38,6 +50,7 @@ npm run dev
 - Ollama and compatible APIs can be configured in `.env` and optionally replaced per request in the compact model-route panel.
 - Provider timeouts are configurable with `LLM_TIMEOUT_MS`, `OPENAI_TIMEOUT_MS`, `COMPATIBLE_TIMEOUT_MS`, and `OLLAMA_TIMEOUT_MS`.
   Current defaults are 60s, 120s, 120s, and 180s respectively.
+- For longer streamed writeups, `LLM_WRITEUP_TIMEOUT_MS` can be set separately. The compose file defaults it to 300s.
 - If the API call fails or returns no usable content, the app falls back to demo data so the experience remains usable.
 - If the configured LLM fails or returns unusable JSON, the app falls back to the deterministic compiler instead of returning an empty result.
 

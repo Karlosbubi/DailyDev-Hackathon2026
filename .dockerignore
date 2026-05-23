@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+.svelte-kit
+node_modules
+build
+.agents
+.codex
+npm-debug.log*
+README.md
+docs
+DailyDevAPI.json
+Outline.md
