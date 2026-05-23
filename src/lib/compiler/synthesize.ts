@@ -211,34 +211,25 @@ function dedupeAdjacentWords(title: string): string {
   return words.filter((word, index) => word.toLowerCase() !== words[index - 1]?.toLowerCase()).join(' ');
 }
 
+function trimTierSuffixes(title: string): string {
+  return title
+    .replace(/\b(starter|platform|suite|studio|system|console)\s+\1\b/gi, '$1')
+    .replace(/\b(workbench)\s+(starter)\b/gi, 'Workbench Starter')
+    .trim();
+}
+
 function renameTitleByTier(baseTitle: string, tier: ProjectRecommendation['tier']): string {
-  const cleanTitle = dedupeAdjacentWords(baseTitle);
+  const cleanTitle = trimTierSuffixes(dedupeAdjacentWords(baseTitle));
 
   if (tier === 'medium') {
     return cleanTitle;
   }
 
   if (tier === 'low') {
-    if (/\bplatform$/i.test(cleanTitle)) {
-      return cleanTitle.replace(/\bplatform$/i, 'Starter');
-    }
-
-    if (/\b(workbench|studio|console|system)$/i.test(cleanTitle)) {
-      return `${cleanTitle} Starter`;
-    }
-
-    return `${cleanTitle} Starter`;
-  }
-
-  if (/\bstarter$/i.test(cleanTitle)) {
-    return cleanTitle.replace(/\bstarter$/i, 'Platform');
-  }
-
-  if (/\b(platform|suite|studio|system)$/i.test(cleanTitle)) {
     return cleanTitle;
   }
 
-  return `${cleanTitle} Platform`;
+  return cleanTitle;
 }
 
 function scaleProject(

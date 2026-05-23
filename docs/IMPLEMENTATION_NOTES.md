@@ -43,6 +43,44 @@ The main analysis step now comes from the configured LLM provider because:
 
 Deterministic clustering and project synthesis still exist, but only as a fallback when the LLM path fails or returns incomplete JSON.
 
+## Current output gap
+
+The product copy says the output should feel close enough to start building, not just interesting enough to read. The current system does not reliably meet that standard yet.
+
+What is going wrong:
+
+- the main project contract is still too recommendation-shaped
+- the pipeline asks for titles, summaries, rationale, architecture, and milestones, but not enough build-critical structure
+- partial LLM success still tends to inherit broad fallback scaffolding
+- the final writeup is useful as narrative, but not yet strong enough as an implementation handoff
+
+In practice, this means the system often returns:
+
+- a plausible direction
+- a readable project name
+- a decent-looking roadmap
+
+But still misses the harder artifacts that make a developer feel ready to start building:
+
+- target user
+- core problem
+- first release scope
+- explicit non-goals
+- primary workflow
+- domain entities
+- version-one system boundaries
+- first vertical slice
+- acceptance criteria
+
+This is not primarily a model-quality issue. Different models improve style and coherence, but the larger problem is that the current prompt and validation contract is underspecified for build-readiness.
+
+The corrective direction is:
+
+- replace the current project summary contract with a build-spec contract
+- generate product brief, domain model, system boundaries, first slice, and acceptance criteria as first-class artifacts
+- add a critique pass that rejects outputs that are still too vague to implement
+- keep deterministic fallback structural, not prose-heavy, so it stops anchoring the LLM toward generic output
+
 ## LLM providers
 
 The current LLM layer is server-side, primary, and server-configured first.
@@ -143,5 +181,5 @@ This is intentional. The product should stay demoable even when the external API
 
 - add a request/response contract note for the LLM settings payload
 - add a request/response contract note for `/api/compile`
-- document the clustering heuristics and keyword families
+- document the new build-spec contract once the project schema is expanded
 - add a changelog section for product-facing behavior changes

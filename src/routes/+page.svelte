@@ -51,6 +51,7 @@
   let llmModel = data.serverLlmConfig.model;
   let llmBaseUrl = data.serverLlmConfig.baseUrl ?? '';
   let llmApiToken = '';
+  let llmApiTokenInput: HTMLInputElement | null = null;
 
   const fmtPercent = (value: number) => `${Math.round(value * 100)}% relevance`;
   const activityLabels: Record<string, string> = {
@@ -91,7 +92,7 @@
   const fallbackInteractiveProvider: LlmProvider =
     data.serverLlmConfig.provider === 'none' ? 'ollama' : data.serverLlmConfig.provider;
 
-  const CACHE_VERSION = 'v2';
+  const CACHE_VERSION = 'v3';
 
   function applyTheme(mode: ThemeMode, persist = true) {
     themeMode = mode;
@@ -188,6 +189,8 @@
   }
 
   async function compile(mode: 'manual' | 'demo') {
+    llmApiToken = llmApiTokenInput?.value?.trim() ?? llmApiToken.trim();
+
     if (overrideLlm && llmProvider === 'openai' && !llmApiToken.trim()) {
       error = 'OpenAI override requires your own API token.';
       return;
@@ -208,14 +211,7 @@
     partialWriteup = '';
     analysisTrace = [];
     selectedTier = 'medium';
-
-    const cached = readCachedCompilation(mode);
-    if (cached) {
-      applyCompilationSnapshot(cached);
-      streamMessage = 'Loaded cached result. Refreshing from live pipeline.';
-    } else {
-      compilation = null;
-    }
+    compilation = null;
 
     try {
       const response = await fetch('/api/compile/stream', {
@@ -404,6 +400,11 @@
     localStorage.setItem('project-steering-note', value);
   }
 
+  function persistLlmApiToken(value: string) {
+    llmApiToken = value;
+    localStorage.setItem('llm-api-token', value);
+  }
+
   onMount(async () => {
     const savedTheme = localStorage.getItem('theme-mode');
     const preferredTheme =
@@ -415,6 +416,7 @@
     applyTheme(preferredTheme, false);
     token = localStorage.getItem('dailydev-token') ?? '';
     steeringNote = localStorage.getItem('project-steering-note') ?? '';
+    llmApiToken = localStorage.getItem('llm-api-token') ?? '';
     streamPhase = 'idle';
     streamMessage = token.trim()
       ? 'Saved inputs restored. Start a run when ready.'
@@ -555,7 +557,17 @@
                 {#if llmProvider === 'openai'}
                   <label class="grid gap-2">
                     <span class="text-sm text-black/60">API token</span>
-                    <input bind:value={llmApiToken} type="password" placeholder="sk-..." class="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm" />
+                    <input
+                      bind:this={llmApiTokenInput}
+                      bind:value={llmApiToken}
+                      type="password"
+                      oninput={(event) => persistLlmApiToken((event.currentTarget as HTMLInputElement).value)}
+                      onchange={(event) => persistLlmApiToken((event.currentTarget as HTMLInputElement).value)}
+                      autocomplete="new-password"
+                      spellcheck="false"
+                      placeholder="sk-..."
+                      class="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm"
+                    />
                   </label>
                   <label class="grid gap-2">
                     <span class="text-sm text-black/60">Model</span>

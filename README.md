@@ -40,6 +40,23 @@ docker compose up --build
 - generated interest clusters, project recommendation, and rationale
 - roadmap, architecture, and learning-goal views
 
+## Current limitation
+
+The product promise is that the output should feel close enough to start building, not just interesting enough to read. The current implementation still falls short of that bar.
+
+Today the pipeline is better at producing a plausible recommendation than a true build-ready implementation spec. Even with stronger models, the current prompt contract still over-optimizes for summaries, rationale, and readable writeups instead of harder delivery artifacts like:
+
+- target user
+- core problem
+- first release scope
+- non-goals
+- primary workflow
+- domain entities
+- first vertical slice
+- acceptance criteria
+
+The next major improvement is to move from recommendation generation toward spec generation, with stricter structure and validation.
+
 ## Live import notes
 
 - Generate a personal access token from daily.dev API Settings.
@@ -61,4 +78,4 @@ docker compose up --build
 
 ## Next step
 
-Tighten the LLM output contract and persist imported snapshots for returning users.
+Replace the current recommendation-style project contract with a build-spec contract and add stronger validation before a project is accepted.

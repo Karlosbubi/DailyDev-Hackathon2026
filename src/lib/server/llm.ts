@@ -682,7 +682,9 @@ function buildVariantNamingPrompt(input: {
     'Each value must be a short project title string, not a sentence.',
     'Keep the names consistent with the same core product, but make them feel like distinct scopes.',
     'Avoid repeated trailing words like "Platform Platform".',
-    'Example: {"variants":{"low":"AI Ops Starter","medium":"AI Ops Control Plane","high":"AI Ops Deployment Platform"}}',
+    'Do not force generic suffixes like Platform, Suite, or Starter unless they are clearly natural for the product.',
+    'Prefer names that sound like believable tools a developer would actually build or use.',
+    'Example: {"variants":{"low":"AI Ops Triage","medium":"AI Ops Control Plane","high":"AI Ops Deployment Orchestrator"}}',
     'Output valid JSON only.',
     JSON.stringify(compact)
   ].join('\n');
@@ -846,7 +848,12 @@ function sanitizeWriteupText(value: string | null | undefined): string | null {
 async function requestOpenAiContent(
   settings: LlmSettings,
   prompt: string,
-  options: { json: boolean; timeoutMs: number }
+  options: {
+    json: boolean;
+    timeoutMs: number;
+    maxOutputTokens: number;
+    reasoningEffort: 'minimal' | 'low' | 'medium';
+  }
 ): Promise<string | null> {
   const apiKey = resolveOpenAiKey(settings.apiToken);
   if (!apiKey) {
@@ -864,6 +871,10 @@ async function requestOpenAiContent(
       body: JSON.stringify({
         model: settings.model,
         input: prompt,
+        max_output_tokens: options.maxOutputTokens,
+        reasoning: {
+          effort: options.reasoningEffort
+        },
         ...(options.json
           ? {
               text: {
@@ -882,14 +893,40 @@ async function requestOpenAiContent(
     throw new Error(`OpenAI request failed with status ${response.status}.`);
   }
 
-  const payload = (await response.json()) as { output_text?: string };
-  return payload.output_text ?? null;
+  const payload = (await response.json()) as {
+    output_text?: string;
+    output?: Array<{
+      type?: string;
+      content?: Array<{
+        type?: string;
+        text?: string;
+      }>;
+    }>;
+  };
+
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
+    return payload.output_text;
+  }
+
+  for (const item of payload.output ?? []) {
+    for (const content of item.content ?? []) {
+      if (content.type === 'output_text' && typeof content.text === 'string' && content.text.trim()) {
+        return content.text;
+      }
+    }
+  }
+
+  return null;
 }
 
 async function requestCompatibleContent(
   settings: LlmSettings,
   prompt: string,
-  options: { json: boolean; timeoutMs: number }
+  options: {
+    json: boolean;
+    timeoutMs: number;
+    maxOutputTokens: number;
+  }
 ): Promise<string | null> {
   const baseUrl = settings.baseUrl?.trim();
   const token = settings.apiToken?.trim();
@@ -918,6 +955,7 @@ async function requestCompatibleContent(
             content: prompt
           }
         ],
+        max_tokens: options.maxOutputTokens,
         ...(options.json
           ? {
               response_format: {
@@ -944,7 +982,10 @@ async function requestCompatibleContent(
 async function requestOllamaContent(
   settings: LlmSettings,
   prompt: string,
-  options: { json: boolean; timeoutMs: number }
+  options: {
+    json: boolean;
+    timeoutMs: number;
+  }
 ): Promise<string | null> {
   const baseUrl = normalizeOllamaBaseUrl(settings.baseUrl);
 
@@ -988,7 +1029,12 @@ async function requestOllamaContent(
 async function requestProviderText(
   settings: LlmSettings,
   prompt: string,
-  options: { json?: boolean; timeoutMs?: number } = {}
+  options: {
+    json?: boolean;
+    timeoutMs?: number;
+    maxOutputTokens?: number;
+    reasoningEffort?: 'minimal' | 'low' | 'medium';
+  } = {}
 ): Promise<{ text: string | null; provider: LlmProvider; model?: string; warnings: string[] }> {
   const useJson = options.json ?? true;
   const timeoutMs =
@@ -1000,6 +1046,8 @@ async function requestProviderText(
         : settings.provider === 'ollama'
           ? OLLAMA_TIMEOUT_MS
           : DEFAULT_LLM_TIMEOUT_MS);
+  const maxOutputTokens = options.maxOutputTokens ?? (useJson ? 900 : 1600);
+  const reasoningEffort = options.reasoningEffort ?? 'minimal';
 
   if (settings.provider === 'none') {
     return {
@@ -1012,17 +1060,27 @@ async function requestProviderText(
 
   try {
     if (settings.provider === 'openai') {
-      const text = await requestOpenAiContent(settings, prompt, { json: useJson, timeoutMs });
+      const text = await requestOpenAiContent(settings, prompt, {
+        json: useJson,
+        timeoutMs,
+        maxOutputTokens,
+        reasoningEffort
+      });
+      const hasApiKey = Boolean(resolveOpenAiKey(settings.apiToken));
       return {
         text,
         provider: 'openai',
         model: settings.model,
-        warnings: text ? [] : ['OpenAI provider selected, but no API key was available.']
+        warnings: text ? [] : hasApiKey ? [] : ['OpenAI provider selected, but no API key was available.']
       };
     }
 
     if (settings.provider === 'compatible') {
-      const text = await requestCompatibleContent(settings, prompt, { json: useJson, timeoutMs });
+      const text = await requestCompatibleContent(settings, prompt, {
+        json: useJson,
+        timeoutMs,
+        maxOutputTokens
+      });
       return {
         text,
         provider: 'compatible',
@@ -1107,7 +1165,10 @@ export async function inferClustersWithLlm(input: {
   }
 
   const prompt = buildClusterPrompt(input);
-  const response = await requestProviderText(input.settings, prompt);
+  const response = await requestProviderText(input.settings, prompt, {
+    maxOutputTokens: 700,
+    reasoningEffort: 'minimal'
+  });
   const parsed = safeJsonParse<Record<string, unknown> | unknown[]>(response.text ?? '');
   const clusters = sanitizeClusters(parsed);
 
@@ -1140,7 +1201,10 @@ export async function draftProjectFrameWithLlm(input: {
   }
 
   const prompt = buildProjectFramePrompt(input);
-  const response = await requestProviderText(input.settings, prompt);
+  const response = await requestProviderText(input.settings, prompt, {
+    maxOutputTokens: 1400,
+    reasoningEffort: 'minimal'
+  });
   const parsed = safeJsonParse<Record<string, unknown>>(response.text ?? '');
   const candidate = extractProjectCandidate(parsed);
   const project = candidate ? sanitizeProjectFrame(candidate) : null;
@@ -1174,7 +1238,10 @@ export async function draftProjectPlanWithLlm(input: {
   }
 
   const prompt = buildProjectPlanPrompt(input);
-  const response = await requestProviderText(input.settings, prompt);
+  const response = await requestProviderText(input.settings, prompt, {
+    maxOutputTokens: 1400,
+    reasoningEffort: 'minimal'
+  });
   const parsed = safeJsonParse<Record<string, unknown>>(response.text ?? '');
   const candidate = extractProjectCandidate(parsed);
   const project = candidate ? sanitizeProjectPlan(candidate) : null;
@@ -1209,7 +1276,10 @@ export async function draftProjectArchitectureWithLlm(input: {
   }
 
   const prompt = buildProjectArchitecturePrompt(input);
-  const response = await requestProviderText(input.settings, prompt);
+  const response = await requestProviderText(input.settings, prompt, {
+    maxOutputTokens: 1100,
+    reasoningEffort: 'minimal'
+  });
   const parsed = safeJsonParse<Record<string, unknown>>(response.text ?? '');
   const candidate = extractProjectCandidate(parsed);
   const project = candidate ? sanitizeProjectArchitecture(candidate) : null;
@@ -1244,7 +1314,10 @@ export async function draftProjectRoadmapWithLlm(input: {
   }
 
   const prompt = buildProjectRoadmapPrompt(input);
-  const response = await requestProviderText(input.settings, prompt);
+  const response = await requestProviderText(input.settings, prompt, {
+    maxOutputTokens: 1100,
+    reasoningEffort: 'minimal'
+  });
   const parsed = safeJsonParse<Record<string, unknown>>(response.text ?? '');
   const candidate = extractProjectCandidate(parsed);
   const project = candidate ? sanitizeProjectRoadmap(candidate) : null;
@@ -1278,7 +1351,10 @@ export async function nameProjectVariantsWithLlm(input: {
   }
 
   const prompt = buildVariantNamingPrompt(input);
-  const response = await requestProviderText(input.settings, prompt);
+  const response = await requestProviderText(input.settings, prompt, {
+    maxOutputTokens: 420,
+    reasoningEffort: 'minimal'
+  });
   const parsed = safeJsonParse<Record<string, unknown>>(response.text ?? '');
   const variants = sanitizeVariantTitles(parsed);
 
@@ -1311,7 +1387,9 @@ export async function draftProjectWriteupWithLlm(input: {
   const prompt = buildProjectWriteupPrompt(input);
   const response = await requestProviderText(input.settings, prompt, {
     json: false,
-    timeoutMs: WRITEUP_TIMEOUT_MS
+    timeoutMs: WRITEUP_TIMEOUT_MS,
+    maxOutputTokens: 2200,
+    reasoningEffort: 'minimal'
   });
   const writeup = sanitizeWriteupText(response.text);
 
@@ -1364,7 +1442,10 @@ export async function refineProjectWithLlm(input: {
     input.settings.provider === 'ollama'
       ? buildOllamaRefinementPrompt(input)
       : buildRefinementPrompt(input);
-  const response = await requestProviderText(input.settings, prompt);
+  const response = await requestProviderText(input.settings, prompt, {
+    maxOutputTokens: 1600,
+    reasoningEffort: 'minimal'
+  });
   const parsed = safeJsonParse<Partial<ProjectSpec> & { project?: Partial<ProjectSpec> }>(response.text ?? '');
   const sanitized = parsed
     ? mergeProjectWithBaseline((parsed.project ?? parsed) as Partial<ProjectSpec>, input.project)
