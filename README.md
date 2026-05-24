@@ -29,6 +29,36 @@ docker compose up --build
 - The app is configured to talk to Ollama over the internal compose network with `OLLAMA_BASE_URL=http://ollama:11434/api`.
 - No app data is persisted on the server. Only the Ollama model cache is stored in the `ollama-data` volume.
 
+## Auto-deploy watcher
+
+The repo now includes a small polling deploy watcher in [scripts/auto-deploy.sh](/home/kurt/Projects/Daily_Dev_Hackathon/scripts/auto-deploy.sh:1).
+
+What it does:
+
+- checks `origin/<branch>` on an interval
+- fast-forward pulls when upstream changed
+- runs `docker compose up -d --build` or falls back to `docker-compose up -d --build`
+
+Defaults:
+
+- branch: current checked-out branch
+- remote: `origin`
+- interval: `60` seconds
+
+Example:
+
+```bash
+DEPLOY_INTERVAL_SECONDS=60 ./scripts/auto-deploy.sh
+```
+
+Safety behavior:
+
+- refuses to start if the git worktree is dirty
+- uses `git pull --ff-only`
+- does not delete volumes or reset the repo
+
+A systemd unit template is included at [scripts/auto-deploy.service.example](/home/kurt/Projects/Daily_Dev_Hackathon/scripts/auto-deploy.service.example:1).
+
 ## Current scope
 
 - live daily.dev token-based import path with demo fallback

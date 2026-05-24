@@ -1,0 +1,17 @@
+[Unit]
+Description=DailyDev Hackathon auto-deploy watcher
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/dailydev-hackathon
+ExecStart=/srv/dailydev-hackathon/scripts/auto-deploy.sh
+Restart=always
+RestartSec=10
+Environment=DEPLOY_INTERVAL_SECONDS=60
+Environment=DEPLOY_BRANCH=main
+Environment=DEPLOY_REMOTE=origin
+
+[Install]
+WantedBy=multi-user.target

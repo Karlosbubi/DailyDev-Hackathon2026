@@ -21,6 +21,33 @@ The app now supports one live-token source on purpose:
 
 This keeps account access explicit and user-controlled. If no token is provided, the app stays in demo mode.
 
+## Auto-deploy watcher
+
+Deployment automation is intentionally kept outside the app process.
+
+The repo now ships a simple polling watcher:
+
+- `scripts/auto-deploy.sh`
+
+Behavior:
+
+- polls the configured git remote and branch every `DEPLOY_INTERVAL_SECONDS`
+- fetches upstream state with `git fetch`
+- compares `HEAD` to `remote/branch`
+- if upstream changed, runs `git pull --ff-only`
+- rebuilds and restarts the stack with `docker compose up -d --build`
+- falls back to `docker-compose` if Docker Compose v2 is unavailable
+
+Safety constraints:
+
+- it exits immediately if the worktree is dirty
+- it does not hard reset the repo
+- it does not remove named volumes
+
+There is also a systemd example unit in:
+
+- `scripts/auto-deploy.service.example`
+
 ## Why import progress now streams
 
 The importer no longer waits for a single blocking response before updating the page.
