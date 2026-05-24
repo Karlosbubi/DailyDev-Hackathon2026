@@ -1045,6 +1045,69 @@ async function requestCompatibleContent(
   return payload.choices?.[0]?.message?.content ?? null;
 }
 
+const ollamaModelPulls = new Map<string, Promise<void>>();
+
+async function ensureOllamaModel(baseUrl: string, model: string, timeoutMs: number): Promise<void> {
+  const key = `${baseUrl}::${model}`;
+  const existing = ollamaModelPulls.get(key);
+
+  if (existing) {
+    await existing;
+    return;
+  }
+
+  const pullPromise = (async () => {
+    const tagsResponse = await fetchWithTimeout(
+      `${baseUrl.replace(/\/$/, '')}/tags`,
+      {
+        method: 'GET'
+      },
+      timeoutMs
+    );
+
+    if (!tagsResponse.ok) {
+      throw new Error(`Failed to query Ollama tags (${tagsResponse.status}).`);
+    }
+
+    const tagsPayload = (await tagsResponse.json()) as {
+      models?: Array<{ name?: string }>;
+    };
+    const present = (tagsPayload.models ?? []).some((entry) => entry?.name === model);
+
+    if (present) {
+      return;
+    }
+
+    const pullResponse = await fetchWithTimeout(
+      `${baseUrl.replace(/\/$/, '')}/pull`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model,
+          stream: false
+        })
+      },
+      timeoutMs
+    );
+
+    if (!pullResponse.ok) {
+      const body = await pullResponse.text().catch(() => '');
+      throw new Error(`Failed to pull Ollama model ${model} (${pullResponse.status})${body ? `: ${body}` : '.'}`);
+    }
+  })();
+
+  ollamaModelPulls.set(key, pullPromise);
+
+  try {
+    await pullPromise;
+  } finally {
+    ollamaModelPulls.delete(key);
+  }
+}
+
 async function requestOllamaContent(
   settings: LlmSettings,
   prompt: string,
@@ -1054,35 +1117,45 @@ async function requestOllamaContent(
   }
 ): Promise<string | null> {
   const baseUrl = normalizeOllamaBaseUrl(settings.baseUrl);
-
-  const response = await fetchWithTimeout(
-    `${baseUrl.replace(/\/$/, '')}/chat`,
-    {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json'
+  const requestBody = {
+    model: settings.model,
+    stream: false,
+    ...(options.json ? { format: 'json' } : {}),
+    messages: [
+      {
+        role: 'system',
+        content: options.json ? 'Return valid JSON only.' : 'Return plain text only.'
       },
-      body: JSON.stringify({
-        model: settings.model,
-        stream: false,
-        ...(options.json ? { format: 'json' } : {}),
-        messages: [
-          {
-            role: 'system',
-            content: options.json ? 'Return valid JSON only.' : 'Return plain text only.'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ]
-      })
-    },
-    options.timeoutMs
-  );
+      {
+        role: 'user',
+        content: prompt
+      }
+    ]
+  };
+
+  const sendChat = () =>
+    fetchWithTimeout(
+      `${baseUrl.replace(/\/$/, '')}/chat`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      },
+      options.timeoutMs
+    );
+
+  let response = await sendChat();
+
+  if (response.status === 404) {
+    await ensureOllamaModel(baseUrl, settings.model, options.timeoutMs);
+    response = await sendChat();
+  }
 
   if (!response.ok) {
-    throw new Error(`Ollama request failed with status ${response.status}.`);
+    const body = await response.text().catch(() => '');
+    throw new Error(`Ollama request failed with status ${response.status}${body ? `: ${body}` : '.'}`);
   }
 
   const payload = (await response.json()) as {
