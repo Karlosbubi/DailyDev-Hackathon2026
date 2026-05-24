@@ -436,7 +436,7 @@
         <span class="theme-toggle__label">{themeMode === 'dark' ? 'Dark Nord' : 'Light Nord'}</span>
       </button>
     </div>
-    <header class="grid gap-5 xl:grid-cols-[1.2fr_0.88fr]">
+    <header class="grid gap-5 xl:grid-cols-[1.12fr_0.88fr]">
       <section class="hero-panel rounded-[30px] p-6 md:p-8 lg:p-10">
         <div class="flex flex-wrap items-center gap-3">
           <span class="rounded-full border border-moss-500/18 bg-moss-500/10 px-3 py-2 font-mono text-[11px] uppercase mono-kicker text-moss-600">
