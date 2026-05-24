@@ -496,7 +496,10 @@ function resolveServerBaseUrl(provider: LlmProvider): string | undefined {
 
 function normalizeOllamaBaseUrl(baseUrl?: string): string {
   const trimmed = (baseUrl || 'http://127.0.0.1:11434/api').trim().replace(/\/$/, '');
-  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+  const internalized = trimmed
+    .replace('http://localhost:11434', 'http://ollama:11434')
+    .replace('http://127.0.0.1:11434', 'http://ollama:11434');
+  return internalized.endsWith('/api') ? internalized : `${internalized}/api`;
 }
 
 function resolveServerApiToken(provider: LlmProvider): string | undefined {

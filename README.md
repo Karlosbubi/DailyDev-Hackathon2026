@@ -27,6 +27,7 @@ docker compose up --build
 - Ollama is exposed on `http://localhost:11434`.
 - The app container waits for Ollama and pulls `llama3.1:8b` by default on first startup. Override with `OLLAMA_MODEL=...` or `OLLAMA_BOOTSTRAP_MODEL=...`.
 - The app is configured to talk to Ollama over the internal compose network with `OLLAMA_BASE_URL=http://ollama:11434/api`.
+- In Docker deployment, the app container always uses the internal service address `http://ollama:11434/api`, even if local development `.env` uses `localhost`.
 - No app data is persisted on the server. Only the Ollama model cache is stored in the `ollama-data` volume.
 
 ## Auto-deploy watcher
