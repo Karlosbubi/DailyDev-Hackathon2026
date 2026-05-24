@@ -161,6 +161,32 @@ function normalizeProjectFields(project: Partial<ProjectSpec>): Partial<ProjectS
   };
 }
 
+function countSentences(value: string): number {
+  return value
+    .split(/[.!?]+/)
+    .map((part) => part.trim())
+    .filter(Boolean).length;
+}
+
+function summaryLooksGeneric(summary: string): boolean {
+  const lower = summary.toLowerCase();
+  const genericMarkers = [
+    'portfolio project',
+    'strongest current interests',
+    'credible technical core',
+    'implementation sprint',
+    'platform for',
+    'broad exploratory concept',
+    'close enough to start building'
+  ];
+  const genericHits = genericMarkers.filter((marker) => lower.includes(marker)).length;
+  const hasReleaseCue = /\b(first release|version one|v1)\b/.test(lower);
+  const hasUserCue = /\b(for |helps |lets |allows |target user)\b/.test(lower);
+  const hasWorkflowCue = /\b(ingest|compare|rank|triage|review|diagnose|track|export|queue|report|evaluate|normalize)\b/.test(lower);
+
+  return genericHits >= 2 || countSentences(summary) < 3 || !hasReleaseCue || !hasUserCue || !hasWorkflowCue;
+}
+
 function sanitizeProject(project: Partial<ProjectSpec>): ProjectSpec | null {
   const normalized = normalizeProjectFields(project);
 
@@ -169,7 +195,8 @@ function sanitizeProject(project: Partial<ProjectSpec>): ProjectSpec | null {
     !normalized.difficulty ||
     !normalized.timeline ||
     !normalized.summary ||
-    normalized.summary.length < 24 ||
+    normalized.summary.length < 80 ||
+    summaryLooksGeneric(normalized.summary) ||
     !normalized.stack ||
     normalized.stack.length < 3 ||
     !normalized.architecture ||
@@ -221,6 +248,14 @@ function sanitizeProjectFrame(project: Partial<ProjectSpec>): Partial<ProjectSpe
 
   if (!normalized.title && !normalized.summary && !normalized.stack && !normalized.rationale) {
     return null;
+  }
+
+  if (normalized.summary && summaryLooksGeneric(normalized.summary)) {
+    return {
+      ...(normalized.title ? { title: normalized.title } : {}),
+      ...(normalized.stack ? { stack: normalized.stack } : {}),
+      ...(normalized.rationale ? { rationale: normalized.rationale } : {})
+    };
   }
 
   return normalized;
@@ -485,6 +520,27 @@ function summarizeActivity(activity: ActivityItem[]): Array<{ title: string; tag
   }));
 }
 
+function buildEvidenceScaffold(activity: ActivityItem[], clusters: Cluster[]) {
+  const repeatedTags = [...new Set(activity.flatMap((item) => item.tags.map((tag) => tag.trim()).filter(Boolean)))].slice(0, 6);
+  const representativeSignals = activity.slice(0, 5).map((item) => item.title);
+  const importedArtifacts = [
+    activity.some((item) => item.type === 'bookmark') ? 'saved posts' : '',
+    activity.some((item) => item.type === 'discussion') ? 'comments and vote signals' : '',
+    activity.some((item) => item.type === 'stack') ? 'stack metadata' : '',
+    activity.some((item) => item.type === 'profile') ? 'profile and experience context' : ''
+  ].filter(Boolean);
+
+  return {
+    repeatedTags,
+    representativeSignals,
+    importedArtifacts,
+    topClusters: clusters.slice(0, 3).map((cluster) => ({
+      name: cluster.name,
+      relatedTags: cluster.relatedTags
+    }))
+  };
+}
+
 function buildClusterPrompt(input: {
   profile: ImportedProfile | null | undefined;
   activity: ActivityItem[];
@@ -524,6 +580,7 @@ function buildProjectFramePrompt(input: {
     profile: input.profile,
     activity: summarizeActivity(input.activity).slice(0, 8),
     clusters: input.clusters,
+    evidence: buildEvidenceScaffold(input.activity, input.clusters),
     steeringNote: input.steeringNote?.trim() || undefined
   };
 
@@ -539,6 +596,7 @@ function buildProjectFramePrompt(input: {
     '2. what painful workflow or decision it improves,',
     '3. what the first release actually does end to end,',
     '4. what technical shape makes it interesting to build.',
+    'The summary must contain the literal phrase "The first release should".',
     'The summary must name at least two concrete capabilities or workflows.',
     'The rationale array must contain exactly 3 short evidence-based reasons tied to clusters, tags, or imported activity.',
     'Do not use generic filler like "portfolio project", "strongest interests", "credible technical core", "implementation sprint", or "platform for X".',
@@ -559,6 +617,7 @@ function buildProjectPlanPrompt(input: {
     profile: input.profile,
     topActivity: summarizeActivity(input.activity).slice(0, 6),
     clusters: input.clusters.slice(0, 4),
+    evidence: buildEvidenceScaffold(input.activity, input.clusters),
     project: {
       title: input.project.title,
       difficulty: input.project.difficulty,
@@ -592,6 +651,7 @@ function buildProjectArchitecturePrompt(input: {
     profile: input.profile,
     topActivity: summarizeActivity(input.activity).slice(0, 5),
     clusters: input.clusters.slice(0, 4),
+    evidence: buildEvidenceScaffold(input.activity, input.clusters),
     project: {
       title: input.project.title,
       difficulty: input.project.difficulty,
@@ -626,6 +686,7 @@ function buildProjectRoadmapPrompt(input: {
     profile: input.profile,
     topActivity: summarizeActivity(input.activity).slice(0, 5),
     clusters: input.clusters.slice(0, 4),
+    evidence: buildEvidenceScaffold(input.activity, input.clusters),
     project: {
       title: input.project.title,
       difficulty: input.project.difficulty,
@@ -664,6 +725,7 @@ function buildVariantNamingPrompt(input: {
         }
       : null,
     clusters: input.clusters.slice(0, 4),
+    evidence: buildEvidenceScaffold([], input.clusters),
     project: {
       title: input.project.title,
       difficulty: input.project.difficulty,
@@ -708,6 +770,7 @@ function buildProjectWriteupPrompt(input: {
       : null,
     topActivity: summarizeActivity(input.activity).slice(0, 8),
     clusters: input.clusters.slice(0, 4),
+    evidence: buildEvidenceScaffold(input.activity, input.clusters),
     project: input.project,
     steeringNote: input.steeringNote?.trim() || undefined
   };

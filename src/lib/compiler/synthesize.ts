@@ -123,6 +123,86 @@ function inferProjectStack(activity: ActivityItem[]): string[] {
   return ['TypeScript', dominantTags[0] ?? 'APIs', dominantTags[1] ?? 'Data modeling', dominantTags[2] ?? 'Interface design', 'SvelteKit'];
 }
 
+function toReadableList(items: string[], conjunction = 'and'): string {
+  const cleaned = [...new Set(items.map((item) => item.trim()).filter(Boolean))];
+  if (cleaned.length === 0) {
+    return '';
+  }
+  if (cleaned.length === 1) {
+    return cleaned[0];
+  }
+  if (cleaned.length === 2) {
+    return `${cleaned[0]} ${conjunction} ${cleaned[1]}`;
+  }
+
+  return `${cleaned.slice(0, -1).join(', ')}, ${conjunction} ${cleaned[cleaned.length - 1]}`;
+}
+
+function pickDominantTags(activity: ActivityItem[], limit: number): string[] {
+  const counts = new Map<string, number>();
+
+  for (const item of activity) {
+    for (const tag of item.tags.map(normalizeTag).filter((tag) => tag.length >= 2)) {
+      counts.set(tag, (counts.get(tag) ?? 0) + item.weight);
+    }
+  }
+
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([tag]) => humanizeSignal(tag));
+}
+
+function inferTargetUser(activity: ActivityItem[], clusters: Cluster[]): string {
+  const topTypes = [...new Set(activity.map((item) => item.type))];
+  const clusterLine = toReadableList(clusters.slice(0, 2).map((cluster) => cluster.name.toLowerCase())) || 'technical';
+
+  if (topTypes.includes('discussion') || topTypes.includes('bookmark')) {
+    return `a developer who actively researches and compares ${clusterLine} decisions before committing to an implementation path`;
+  }
+
+  return `a developer who needs a tighter working surface around ${clusterLine}`;
+}
+
+function inferPrimaryWorkflow(activity: ActivityItem[]): string {
+  const lowerTags = activity.flatMap((item) => item.tags.map(normalizeTag));
+  const lowerTitles = activity.map((item) => item.title.toLowerCase()).join(' ');
+
+  if (lowerTags.some((tag) => ['performance', 'benchmark', 'profiling', 'tracing'].includes(tag)) || lowerTitles.includes('regression')) {
+    return 'compare technical signals, isolate likely regressions, and turn them into an actionable diagnosis';
+  }
+
+  if (lowerTags.some((tag) => ['ai-agents', 'llm', 'rag', 'ai-native'].includes(tag))) {
+    return 'evaluate competing implementation approaches, track experiments, and decide which agent workflow to harden first';
+  }
+
+  if (lowerTags.some((tag) => ['productivity', 'testing', 'code-review', 'dependency-injection'].includes(tag))) {
+    return 'review incoming signals, rank the most relevant engineering ideas, and convert them into a scoped execution queue';
+  }
+
+  return 'ingest recurring technical signals, rank the most relevant patterns, and turn them into one concrete next action';
+}
+
+function inferFirstRelease(activity: ActivityItem[]): string {
+  const importArtifacts = [
+    activity.some((item) => item.type === 'bookmark') ? 'saved posts' : '',
+    activity.some((item) => item.type === 'discussion') ? 'comments and vote signals' : '',
+    activity.some((item) => item.type === 'stack') ? 'stack metadata' : '',
+    activity.some((item) => item.type === 'profile') ? 'profile and experience context' : ''
+  ].filter(Boolean);
+
+  const artifactsLine = toReadableList(importArtifacts) || 'imported developer signals';
+  return `The first release should ingest ${artifactsLine}, normalize them into one working dataset, and expose a single ranked operator view with one export or follow-up flow.`;
+}
+
+function inferTechnicalShape(activity: ActivityItem[], clusters: Cluster[]): string {
+  const dominantTags = pickDominantTags(activity, 3);
+  const clusterLine = toReadableList(clusters.slice(0, 2).map((cluster) => cluster.name)) || 'signal analysis';
+  const tagsLine = toReadableList(dominantTags.map((tag) => tag.toLowerCase())) || 'ranked signals';
+
+  return `The interesting part is the backend shape: it has to model ${clusterLine.toLowerCase()} signals, reconcile ${tagsLine}, and produce something a developer can trust enough to act on.`;
+}
+
 export function synthesizeProject(clusters: Cluster[], activity: ActivityItem[], steeringNote?: string): ProjectSpec {
   const topCluster = clusters[0]?.name ?? 'Developer Workflow';
   const secondCluster = clusters[1]?.name ?? 'Implementation Systems';
@@ -130,32 +210,33 @@ export function synthesizeProject(clusters: Cluster[], activity: ActivityItem[],
   const topItems = activity.slice(0, 3).map((item) => item.title);
   const topTags = [...new Set(activity.flatMap((item) => item.tags))].slice(0, 5);
   const dominantTags = topTags.slice(0, 3).join(', ') || 'operational signals';
-  const firstSignal = activity[0]?.title || 'recent technical activity';
   const steering = normalizeSteeringNote(steeringNote);
-  const steeringSummary = steering
-    ? ` It should explicitly honor the user steer toward ${steering} while staying grounded in the imported activity.`
-    : '';
+  const steeringSummary = steering ? ` It should explicitly honor the user steer toward ${steering} while staying grounded in the imported activity.` : '';
+  const targetUser = inferTargetUser(activity, clusters);
+  const workflow = inferPrimaryWorkflow(activity);
+  const firstRelease = inferFirstRelease(activity);
+  const technicalShape = inferTechnicalShape(activity, clusters);
   const project: ProjectSpec = {
     title: inferProjectTitle(clusters, steering),
     difficulty: 'Intermediate',
     timeline: '2 to 3 weekends',
-    summary: `Build a focused ${topCluster.toLowerCase()} workbench for developers who keep running into ${secondCluster.toLowerCase()} decisions during day-to-day work. The first release should ingest ${dominantTags}, turn them into one ranked operating view, and support one concrete workflow from raw signal to action. It should feel closer to a decision-support tool than a content browser, with enough backend shape to make ${firstSignal.toLowerCase()} actionable.${steeringSummary}`,
+    summary: `Build a focused ${topCluster.toLowerCase()} tool for ${targetUser}. The main workflow should help them ${workflow}. ${firstRelease} ${technicalShape}${steeringSummary}`,
     stack: inferProjectStack(activity),
     architecture: [
-      ['Input Layer', 'Imports articles, bookmarks, and stack signals into one normalized stream.'],
-      ['Signal Analysis', 'Ranks repeated topics and extracts dominant build directions from user activity.'],
-      ['Project Engine', 'Turns open-ended themes into a scoped concept, stack, and execution model.'],
-      ['Execution Surface', 'Shows what to build next and why it matches the developer profile.']
+      ['Signal Intake', 'Collects saved posts, discussion signals, and profile context into one typed ingestion path with source-aware normalization.'],
+      ['Working Dataset', 'Stores normalized signals, repeated tags, and ranking metadata so the product can explain why an item surfaced.'],
+      ['Decision Engine', 'Clusters recurring patterns, scores relevance, and turns raw activity into one concrete recommendation or operator view.'],
+      ['Operator Surface', 'Lets the developer inspect the ranked output, compare evidence, and take one explicit next action from the first release workflow.']
     ],
     milestones: [
-      ['Import signals', 'Aggregate technical activity into one developer profile snapshot.'],
-      ['Rank live topics', 'Identify repeated themes without constraining them to a fixed taxonomy.'],
-      ['Generate the plan', 'Produce milestones, stack recommendations, and architecture notes from the discovered signals.'],
-      ['Tighten the loop', 'Refine outputs until the suggested project feels concrete enough to start.']
+      ['Ingest real signals', 'Import saved posts, discussion context, and stack data into one normalized dataset with traceable source attribution.'],
+      ['Model the working view', 'Build the ranked operator surface that exposes repeated patterns, evidence, and one actionable next step.'],
+      ['Implement the decision loop', 'Turn clustered signals into one end-to-end workflow that produces a concrete recommendation, report, or queue item.'],
+      ['Harden the first release', 'Add enough validation, instrumentation, and explanation so the output feels trustworthy instead of just plausible.']
     ],
     learningGoals: [
       `Practice shipping within the ${topCluster} space instead of continuing passive research.`,
-      'Turn content consumption into a repeatable build-selection workflow.',
+      `Learn how to translate repeated ${dominantTags.toLowerCase()} signals into one opinionated product workflow.`,
       'Use implementation planning as part of your developer feedback loop.'
     ],
     rationale: [
