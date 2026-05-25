@@ -48,6 +48,34 @@ There is also a systemd example unit in:
 
 - `scripts/auto-deploy.service.example`
 
+## HTTPS deployment
+
+HTTPS is now handled by a dedicated reverse proxy container instead of the Node app directly.
+
+Current Docker layout:
+
+- `caddy` exposes ports `80` and `443`
+- `app` stays internal on port `3000`
+- `caddy` reverse proxies to `app:3000`
+- Caddy manages certificate issuance and renewal automatically through Let's Encrypt
+
+Why this shape:
+
+- the SvelteKit app does not need to terminate TLS itself
+- certificate lifecycle stays outside the application process
+- the deployment path is simpler than running Certbot manually against a standalone Node server
+
+Operational requirements:
+
+- set `PUBLIC_DOMAIN` to a real fully qualified domain name
+- point DNS at the server before starting the stack
+- keep inbound `80` and `443` reachable for HTTP challenge and HTTPS traffic
+
+Certificate state is stored in the named volumes:
+
+- `caddy-data`
+- `caddy-config`
+
 ## Why import progress now streams
 
 The importer no longer waits for a single blocking response before updating the page.

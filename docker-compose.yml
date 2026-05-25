@@ -6,14 +6,31 @@ services:
     depends_on:
       - ollama
     environment:
+      HOST: 0.0.0.0
+      PORT: 3000
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       OLLAMA_BASE_URL: http://ollama:11434/api
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
       OLLAMA_BOOTSTRAP_MODEL: ${OLLAMA_BOOTSTRAP_MODEL:-llama3.1:8b}
       OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-300000}
       LLM_WRITEUP_TIMEOUT_MS: ${LLM_WRITEUP_TIMEOUT_MS:-300000}
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - app
     ports:
-      - 80:3000
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-localhost}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
     restart: unless-stopped
 
   ollama:
@@ -33,3 +50,5 @@ services:
 
 volumes:
   ollama-data:
+  caddy-data:
+  caddy-config:

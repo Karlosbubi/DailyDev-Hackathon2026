@@ -23,12 +23,41 @@ npm run dev
 docker compose up --build
 ```
 
-- The app is exposed on `http://localhost:3000`.
+- The public entrypoint is now Caddy on `http://localhost` and `https://localhost`.
+- The SvelteKit app stays internal on port `3000` and is reverse-proxied by Caddy.
 - Ollama is exposed on `http://localhost:11434`.
 - The app container waits for Ollama and pulls `llama3.1:8b` by default on first startup. Override with `OLLAMA_MODEL=...` or `OLLAMA_BOOTSTRAP_MODEL=...`.
 - The app is configured to talk to Ollama over the internal compose network with `OLLAMA_BASE_URL=http://ollama:11434/api`.
 - In Docker deployment, the app container always uses the internal service address `http://ollama:11434/api`, even if local development `.env` uses `localhost`.
 - No app data is persisted on the server. Only the Ollama model cache is stored in the `ollama-data` volume.
+
+## HTTPS with Let's Encrypt
+
+The compose stack now includes Caddy for automatic HTTPS and certificate management.
+
+What you need:
+
+- a real public domain name
+- an `A` record (and `AAAA` if using IPv6) pointing to your server
+- inbound ports `80` and `443` open in the firewall/security group
+- `PUBLIC_DOMAIN` set before starting the stack
+
+Example:
+
+```bash
+PUBLIC_DOMAIN=app.example.com docker compose up -d --build
+```
+
+Behavior:
+
+- Caddy listens on ports `80` and `443`
+- it reverse proxies traffic to the internal `app:3000` service
+- it requests and renews Let's Encrypt certificates automatically
+
+Notes:
+
+- with `PUBLIC_DOMAIN=localhost`, Caddy will not obtain a public Let's Encrypt cert; use a real domain for production HTTPS
+- certificate state is stored in the `caddy-data` volume
 
 ## Auto-deploy watcher
 
