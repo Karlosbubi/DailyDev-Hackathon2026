@@ -1,4 +1,10 @@
 {$PUBLIC_DOMAIN} {
+	@compile_stream path /api/compile/stream
+
+	reverse_proxy @compile_stream app:3000 {
+		flush_interval -1
+	}
+
 	reverse_proxy app:3000
 
 	header {

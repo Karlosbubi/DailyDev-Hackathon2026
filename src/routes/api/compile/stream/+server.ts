@@ -15,8 +15,37 @@ export async function POST({ request, fetch }) {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      let closed = false;
+      const close = () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        controller.close();
+      };
+
+      const enqueue = (chunk: string) => {
+        if (closed) {
+          return;
+        }
+
+        controller.enqueue(encoder.encode(chunk));
+      };
+
+      const heartbeat = setInterval(() => {
+        enqueue('\n');
+      }, 8_000);
+
+      const abortHandler = () => {
+        clearInterval(heartbeat);
+        close();
+      };
+
+      request.signal.addEventListener('abort', abortHandler);
+
       async function emit(event: CompilationStreamEvent) {
-        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        enqueue(`${JSON.stringify(event)}\n`);
       }
 
       try {
@@ -39,7 +68,9 @@ export async function POST({ request, fetch }) {
           message: error instanceof Error ? error.message : 'Unknown streaming compile error'
         });
       } finally {
-        controller.close();
+        clearInterval(heartbeat);
+        request.signal.removeEventListener('abort', abortHandler);
+        close();
       }
     }
   });
@@ -48,6 +79,8 @@ export async function POST({ request, fetch }) {
     headers: {
       'content-type': 'application/x-ndjson; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
+      'x-accel-buffering': 'no',
+      'content-encoding': 'identity',
       connection: 'keep-alive'
     }
   });
