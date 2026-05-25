@@ -6,18 +6,14 @@ services:
     depends_on:
       - ollama
     environment:
-      HOST: 0.0.0.0
-      PORT: 3000
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       OLLAMA_BASE_URL: http://ollama:11434/api
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
       OLLAMA_BOOTSTRAP_MODEL: ${OLLAMA_BOOTSTRAP_MODEL:-llama3.1:8b}
       OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-300000}
       LLM_WRITEUP_TIMEOUT_MS: ${LLM_WRITEUP_TIMEOUT_MS:-300000}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPEN_AI_API_TOKEN: ${OPEN_AI_API_TOKEN:-}
     ports:
-      - "${APP_PORT:-3000}:80"
+      - 3000:80
     restart: unless-stopped
 
   ollama:
